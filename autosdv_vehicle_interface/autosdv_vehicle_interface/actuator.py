@@ -509,29 +509,9 @@ class AutoSdvActuator(Node):
         if self.state.target_tire_angle is None:
             return self.config.init_steer
 
-        # Get the current steering angle
-        current_angle = self.state.current_tire_angle or 0.0
-
-        # Determine the target steering angle
+        # Instant steering
         target_angle = self.state.target_tire_angle
-
-        # If steering speed limit is very small, set steering angle directly
-        # Otherwise, limit the steering rate to simulate more realistic vehicle dynamics
-        if self.config.steering_speed < 0.001:
-            # Instant steering (not realistic but simple)
-            steer_angle = target_angle
-        else:
-            # Compute maximum angle change for this time step
-            max_angle_change = self.config.steering_speed * delta_time
-
-            # Determine steering direction
-            if abs(target_angle - current_angle) < max_angle_change:
-                # Close enough to target, set directly
-                steer_angle = target_angle
-            else:
-                # Apply limited steering rate
-                steer_direction = 1.0 if target_angle > current_angle else -1.0
-                steer_angle = current_angle + steer_direction * max_angle_change
+        steer_angle = target_angle
 
         # Convert the steering angle to PWM value
         steer = steer_angle * self.config.tire_angle_to_steer_ratio
@@ -561,7 +541,7 @@ class AutoSdvActuator(Node):
             return 0.0, 1.0, False  # Zero throttle, full brake
 
         # Handle reverse control
-        self.run_control_reverse()
+        # self.run_control_reverse()
 
         # Run speed controller to get target acceleration
         self.run_control_speed(delta_time)
@@ -694,6 +674,14 @@ class AutoSdvActuator(Node):
                 throttle = abs(self.state.accel_control_pedal_target)
                 brake = 0.0
 
+        # Since we don't have reverse function
+        if self.state.accel_control_pedal_target < 0.0:
+            throttle = 0.0
+            brake = abs(self.state.accel_control_pedal_target)
+        else:
+            throttle = abs(self.state.accel_control_pedal_target)
+            brake = 0.0
+
         # Limit values to [0, 1] range
         throttle = max(0.0, min(throttle, 1.0))
         brake = max(0.0, min(brake, 1.0))
@@ -718,26 +706,15 @@ class AutoSdvActuator(Node):
         forward_range = self.config.max_pwm - self.config.init_pwm
         backward_range = self.config.init_pwm - self.config.min_pwm
 
-        if in_reverse:
-            # In reverse gear
-            if throttle > 0:
-                # Apply reverse throttle
-                pwm_value = self.config.init_pwm - int(throttle * backward_range)
-            else:
-                # Apply brake while in reverse (slows down reverse movement)
-                pwm_value = self.config.init_pwm + int(
-                    brake * forward_range * 0.5
-                )  # Use less brake when reversing
+        # Since we don't have reverse function
+        if throttle > 0:
+            # Apply forward throttle
+            pwm_value = self.config.init_pwm + int(throttle * forward_range)
         else:
-            # In forward gear
-            if throttle > 0:
-                # Apply forward throttle
-                pwm_value = self.config.init_pwm + int(throttle * forward_range)
-            else:
-                # Apply brake
-                pwm_value = self.config.init_pwm - int(
-                    brake * backward_range * 0.5
-                )  # Use less reverse PWM for braking
+            # Apply brake
+            pwm_value = self.config.init_pwm - int(
+                brake * backward_range * 0.5
+            )  # Use less reverse PWM for braking
 
         # Ensure the PWM value is within the allowed range
         pwm_value = max(self.config.min_pwm, min(pwm_value, self.config.max_pwm))
