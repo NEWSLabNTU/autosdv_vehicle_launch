@@ -42,11 +42,11 @@
     steering_speed: 1.0
 
     # The initial value for the steering servo that makes the vehicle go straight.
-    init_steer: 400
+    init_steer: 470
     # The minimum control value for steering servo making the leftmost turn.
-    min_steer: 280
+    min_steer: 350
     # The maximum control value for steering servo making the rightmost turn.
-    max_steer: 520
+    max_steer: 590
 
     # The ratio between the tire angle and the steer value
     tire_angle_to_steer_ratio: -2000.0
