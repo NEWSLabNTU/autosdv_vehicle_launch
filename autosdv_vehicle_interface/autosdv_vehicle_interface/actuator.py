@@ -8,6 +8,7 @@ import math
 import time
 from typing import Optional, Tuple
 from dataclasses import dataclass
+from enum import Enum
 
 from Adafruit_PCA9685 import PCA9685
 from simple_pid import PID
@@ -20,6 +21,24 @@ from autoware_control_msgs.msg import Control
 from autoware_vehicle_msgs.msg import VelocityReport
 from std_msgs.msg import MultiArrayDimension, MultiArrayLayout
 from autoware_internal_debug_msgs.msg import Float32MultiArrayStamped
+
+
+class MotorState(Enum):
+    """
+    Motor state enum for tracking RC car motor behavior.
+
+    The RC car has special PWM behavior:
+    - PWM = init_pwm: STOPPED
+    - PWM > init_pwm: FORWARD
+    - PWM < init_pwm: BACKWARD or BRAKE_LOCKED
+    - Special case: When moving forward and PWM drops below (init_pwm - threshold),
+      motor locks for braking and cannot go backward until returning to init_pwm first
+    """
+    STOPPED = "stopped"
+    FORWARD = "forward"
+    BACKWARD = "backward"
+    BRAKE_LOCKED = "brake_locked"
+    TRANSITIONING = "transitioning"
 
 
 class AckermannPID:
@@ -145,6 +164,9 @@ class AutoSdvActuator(Node):
 
         # Initialize controller state
         self.state = self.initialize_state()
+
+        # Set initial PWM value from config
+        self.state.last_pwm_value = parameter_values["init_pwm"]
 
         # Initialize hardware
         self.driver = self.initialize_pwm_driver(parameter_values)
@@ -361,6 +383,11 @@ class AutoSdvActuator(Node):
             last_acceleration=0.0,
             in_reverse=False,
             last_update_time=time.time(),
+            # Motor state machine
+            motor_state=MotorState.STOPPED,
+            last_pwm_value=307,  # Will be set from config
+            transition_target=None,
+            brake_threshold=20,  # Default threshold
         )
 
     def initialize_pwm_driver(self, params):
@@ -541,7 +568,7 @@ class AutoSdvActuator(Node):
             return 0.0, 1.0, False  # Zero throttle, full brake
 
         # Handle reverse control
-        # self.run_control_reverse()
+        self.run_control_reverse()
 
         # Run speed controller to get target acceleration
         self.run_control_speed(delta_time)
@@ -576,24 +603,49 @@ class AutoSdvActuator(Node):
     def run_control_reverse(self) -> None:
         """
         Handle the logic for changing between forward and reverse gears.
+        Works with the motor state machine to respect PWM braking constraints.
         """
         # Epsilon threshold for considering vehicle stopped
         standing_still_epsilon = 0.1  # [m/s]
 
-        if abs(self.state.current_speed) < standing_still_epsilon:
-            # Vehicle is standing still, can change direction
-            if self.state.target_speed < 0:
-                # Change to reverse
+        # Only process if we have valid speed data
+        if self.state.current_speed is None or self.state.target_speed is None:
+            return
+
+        current_speed = self.state.current_speed
+        target_speed = self.state.target_speed
+
+        # Check if vehicle is essentially stopped
+        if abs(current_speed) < standing_still_epsilon:
+            # Vehicle is standing still, safe to change direction
+            if target_speed < -0.1:  # Requesting reverse
                 self.state.in_reverse = True
-            elif self.state.target_speed >= 0:
-                # Change to forward
+            elif target_speed > 0.1:  # Requesting forward
                 self.state.in_reverse = False
+            # else: target near zero, maintain current direction mode
+
         else:
-            # Vehicle is moving, check if we need to stop before changing direction
-            if (self.state.current_speed * self.state.target_speed) < 0:
-                # Signs are different, which means we're requesting a direction change
-                # First we need to stop
-                self.state.target_speed = 0.0
+            # Vehicle is moving, handle direction change requests carefully
+            direction_change_requested = (current_speed * target_speed) < 0
+
+            if direction_change_requested:
+                # Direction change requested while moving
+                # Check motor state to determine strategy
+                if self.state.motor_state == MotorState.BRAKE_LOCKED:
+                    # Already braking, wait for stop before changing direction
+                    pass  # Keep current in_reverse state
+                elif abs(current_speed) > 0.5:  # Moving fast
+                    # Force stop first by setting target to zero
+                    # Don't change in_reverse state yet
+                    pass  # Let the controller bring speed to zero first
+                else:
+                    # Moving slowly, can start preparing for direction change
+                    if target_speed < 0 and not self.state.in_reverse:
+                        # Prepare for reverse
+                        self.state.in_reverse = True
+                    elif target_speed > 0 and self.state.in_reverse:
+                        # Prepare for forward
+                        self.state.in_reverse = False
 
     def run_control_speed(self, delta_time: float) -> None:
         """
@@ -648,38 +700,39 @@ class AutoSdvActuator(Node):
         """
         Convert the pedal target to throttle and brake commands.
 
+        Uses state machine logic to properly handle throttle/brake conversion
+        based on current motor state and desired direction.
+
         Returns:
             Tuple[float, float]: Throttle value (0-1) and brake value (0-1)
         """
+        pedal_target = self.state.accel_control_pedal_target
         throttle = 0.0
         brake = 0.0
 
-        # Convert pedal target to throttle/brake based on direction
-        if self.state.accel_control_pedal_target < 0.0:
+        # Handle based on pedal target and current state
+        if pedal_target < -0.05:  # Significant negative pedal
             if self.state.in_reverse:
-                # In reverse, negative pedal = throttle
-                throttle = abs(self.state.accel_control_pedal_target)
+                # In reverse mode, negative pedal = throttle (reverse)
+                throttle = abs(pedal_target)
                 brake = 0.0
             else:
-                # In forward, negative pedal = brake
+                # In forward mode, negative pedal = brake
                 throttle = 0.0
-                brake = abs(self.state.accel_control_pedal_target)
-        else:
-            if self.state.in_reverse:
-                # In reverse, positive pedal = brake
-                throttle = 0.0
-                brake = abs(self.state.accel_control_pedal_target)
-            else:
-                # In forward, positive pedal = throttle
-                throttle = abs(self.state.accel_control_pedal_target)
-                brake = 0.0
+                brake = abs(pedal_target)
 
-        # Since we don't have reverse function
-        if self.state.accel_control_pedal_target < 0.0:
-            throttle = 0.0
-            brake = abs(self.state.accel_control_pedal_target)
+        elif pedal_target > 0.05:  # Significant positive pedal
+            if self.state.in_reverse:
+                # In reverse mode, positive pedal = brake
+                throttle = 0.0
+                brake = abs(pedal_target)
+            else:
+                # In forward mode, positive pedal = throttle (forward)
+                throttle = abs(pedal_target)
+                brake = 0.0
         else:
-            throttle = abs(self.state.accel_control_pedal_target)
+            # Near zero pedal target = coast/idle
+            throttle = 0.0
             brake = 0.0
 
         # Limit values to [0, 1] range
@@ -692,7 +745,12 @@ class AutoSdvActuator(Node):
         self, throttle: float, brake: float, in_reverse: bool
     ) -> int:
         """
-        Convert throttle and brake values to a PWM value for the motor.
+        Convert throttle and brake values to a PWM value for the motor using state machine.
+
+        This respects the RC car's special PWM braking behavior:
+        - When moving forward and brake is applied, motor may lock
+        - To go backward from brake lock, must first return to init_pwm
+        - Only then can PWM decrease for backward motion
 
         Args:
             throttle: Throttle value (0-1)
@@ -702,28 +760,92 @@ class AutoSdvActuator(Node):
         Returns:
             int: PWM value for the motor
         """
-        # Calculate the PWM range
-        forward_range = self.config.max_pwm - self.config.init_pwm
-        backward_range = self.config.init_pwm - self.config.min_pwm
+        # Determine desired motor state
+        desired_state = self._determine_desired_motor_state(throttle, brake, in_reverse)
 
-        # Since we don't have reverse function
-        if throttle > 0:
-            # Apply forward throttle
-            pwm_value = self.config.init_pwm + int(throttle * forward_range)
-        else:
-            # Apply brake
-            pwm_value = self.config.init_pwm - int(
-                brake * backward_range * 0.5
-            )  # Use less reverse PWM for braking
+        # Handle state transitions and get PWM
+        pwm_value = self._handle_motor_state_transition(desired_state, throttle, brake)
 
-        # Ensure the PWM value is within the allowed range
-        pwm_value = max(self.config.min_pwm, min(pwm_value, self.config.max_pwm))
+        # Update motor state tracking
+        self._update_motor_state(pwm_value, desired_state)
 
         return pwm_value
 
+    def _determine_desired_motor_state(self, throttle: float, brake: float, in_reverse: bool) -> MotorState:
+        """Determine the desired motor state based on control inputs."""
+        if brake > 0.1:  # Significant brake command
+            return MotorState.BRAKE_LOCKED
+        elif throttle > 0.05:  # Significant throttle command
+            if in_reverse:
+                return MotorState.BACKWARD
+            else:
+                return MotorState.FORWARD
+        else:
+            return MotorState.STOPPED
+
+    def _handle_motor_state_transition(self, desired_state: MotorState, throttle: float, brake: float) -> int:
+        """Handle motor state transitions and return appropriate PWM value."""
+        current_state = self.state.motor_state
+
+        # Critical transition: BRAKE_LOCKED -> BACKWARD
+        if current_state == MotorState.BRAKE_LOCKED and desired_state == MotorState.BACKWARD:
+            return self._handle_brake_to_reverse_transition(throttle)
+
+        # Other transitions or steady states
+        return self._calculate_pwm_for_state(desired_state, throttle, brake)
+
+    def _handle_brake_to_reverse_transition(self, throttle: float) -> int:
+        """Handle the special transition from brake lock to reverse."""
+        init_pwm = self.config.init_pwm
+        current_pwm = self.state.last_pwm_value
+
+        # Check if we're close enough to init_pwm
+        if abs(current_pwm - init_pwm) <= 5:  # Within 5 PWM units
+            # Now we can transition to backward
+            self.state.transition_target = None
+            backward_range = init_pwm - self.config.min_pwm
+            return init_pwm - int(throttle * backward_range)
+        else:
+            # Must return to init_pwm first
+            self.state.transition_target = MotorState.BACKWARD
+            return init_pwm
+
+    def _calculate_pwm_for_state(self, state: MotorState, throttle: float, brake: float) -> int:
+        """Calculate PWM value for a given motor state."""
+        init_pwm = self.config.init_pwm
+
+        if state == MotorState.STOPPED:
+            return init_pwm
+        elif state == MotorState.FORWARD:
+            forward_range = self.config.max_pwm - init_pwm
+            return init_pwm + int(throttle * forward_range)
+        elif state == MotorState.BACKWARD:
+            backward_range = init_pwm - self.config.min_pwm
+            return init_pwm - int(throttle * backward_range)
+        elif state == MotorState.BRAKE_LOCKED:
+            # Apply braking with reduced PWM range for safety
+            backward_range = init_pwm - self.config.min_pwm
+            brake_pwm = init_pwm - int(brake * backward_range * 0.6)  # Limit brake intensity
+            return max(self.config.min_pwm, brake_pwm)
+        else:
+            # Default to stopped
+            return init_pwm
+
+    def _update_motor_state(self, pwm_value: int, desired_state: MotorState):
+        """Update motor state tracking."""
+        # Clamp PWM to valid range
+        pwm_value = max(self.config.min_pwm, min(pwm_value, self.config.max_pwm))
+
+        # Update state
+        self.state.last_pwm_value = pwm_value
+
+        # Update motor state if not transitioning
+        if self.state.transition_target is None:
+            self.state.motor_state = desired_state
+
     def reset_controllers(self) -> None:
         """
-        Reset all PID controllers to their initial state.
+        Reset all PID controllers and motor state to their initial state.
         """
         self.speed_controller.reset()
         self.accel_controller.reset()
@@ -733,6 +855,11 @@ class AutoSdvActuator(Node):
         self.state.accel_control_pedal_target = 0.0
         self.state.last_acceleration = 0.0
         self.state.in_reverse = False
+
+        # Reset motor state machine
+        self.state.motor_state = MotorState.STOPPED
+        self.state.last_pwm_value = self.config.init_pwm
+        self.state.transition_target = None
 
     def publish_debug_control_values(
         self, throttle: float, brake: float, in_reverse: bool
@@ -858,6 +985,12 @@ class State:
         last_acceleration: Previous measured acceleration
         in_reverse: Whether vehicle is in reverse gear
         last_update_time: Timestamp of last update
+
+        # Motor state machine variables
+        motor_state: Current motor state (STOPPED, FORWARD, etc.)
+        last_pwm_value: Previous PWM value sent to motor
+        transition_target: Target state during transitions
+        brake_threshold: PWM threshold below init_pwm for brake locking
     """
 
     target_speed: Optional[float]
@@ -874,6 +1007,12 @@ class State:
     last_acceleration: float
     in_reverse: bool
     last_update_time: float
+
+    # Motor state machine variables
+    motor_state: MotorState
+    last_pwm_value: int
+    transition_target: Optional[MotorState]
+    brake_threshold: int
 
 
 @dataclass
