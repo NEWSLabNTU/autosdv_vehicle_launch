@@ -23,6 +23,10 @@ setup(
         "console_scripts": [
             "actuator = autosdv_vehicle_interface.actuator:main",
             "velocity_report = autosdv_vehicle_interface.velocity_report:main",
+            "gear_manager = autosdv_vehicle_interface.gear_manager:main",
+            "control_mode_manager = autosdv_vehicle_interface.control_mode_manager:main",
+            "steering_status = autosdv_vehicle_interface.steering_status:main",
+            "signal_manager = autosdv_vehicle_interface.signal_manager:main",
         ],
     },
 )

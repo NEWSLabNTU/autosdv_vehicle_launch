@@ -5,6 +5,7 @@
   <group>
     <push-ros-namespace namespace="autosdv"/>
 
+    <!-- Core vehicle interface nodes -->
     <node pkg="autosdv_vehicle_interface" exec="actuator" name="actuator_node" output="screen">
       <param from="$(find-pkg-share autosdv_vehicle_interface)/params/actuator.yaml"/>
       <remap from="~/input/control_cmd" to="/control/command/control_cmd"/>
@@ -14,6 +15,28 @@
     <node pkg="autosdv_vehicle_interface" exec="velocity_report" name="velocity_report_node" output="screen">
       <param from="$(find-pkg-share autosdv_vehicle_interface)/params/velocity_report.yaml"/>
       <remap from="~/output/velocity_status" to="/vehicle/status/velocity_status"/>
+    </node>
+
+    <!-- Phase 2: Autoware Interface Compliance nodes -->
+
+    <!-- Gear Management -->
+    <node pkg="autosdv_vehicle_interface" exec="gear_manager" name="gear_manager_node" output="screen">
+      <param from="$(find-pkg-share autosdv_vehicle_interface)/params/gear_manager.yaml"/>
+    </node>
+
+    <!-- Control Mode Management -->
+    <node pkg="autosdv_vehicle_interface" exec="control_mode_manager" name="control_mode_manager_node" output="screen">
+      <param from="$(find-pkg-share autosdv_vehicle_interface)/params/control_mode_manager.yaml"/>
+    </node>
+
+    <!-- Steering Status -->
+    <node pkg="autosdv_vehicle_interface" exec="steering_status" name="steering_status_node" output="screen">
+      <param from="$(find-pkg-share autosdv_vehicle_interface)/params/steering_status.yaml"/>
+    </node>
+
+    <!-- Signal Management (Turn indicators and hazard lights) -->
+    <node pkg="autosdv_vehicle_interface" exec="signal_manager" name="signal_manager_node" output="screen">
+      <param from="$(find-pkg-share autosdv_vehicle_interface)/params/signal_manager.yaml"/>
     </node>
   </group>
 </launch>

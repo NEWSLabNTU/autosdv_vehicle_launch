@@ -1,0 +1,13 @@
+/**:
+  ros__parameters:
+    # Publishing rate in Hz
+    publish_rate: 10.0
+    
+    # Blink rate for signal simulation in Hz
+    blink_rate: 2.0
+    
+    # Frame ID for status messages
+    frame_id: "base_link"
+    
+    # Enable blinking simulation for signals
+    simulate_blinking: true

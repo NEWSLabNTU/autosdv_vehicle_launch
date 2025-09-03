@@ -1,0 +1,19 @@
+/**:
+  ros__parameters:
+    # Publishing rate in Hz
+    publish_rate: 10.0
+    
+    # Command timeout in seconds
+    # If no commands received for this duration, switch to DISENGAGED
+    command_timeout: 2.0
+    
+    # Startup delay in seconds
+    # System reports NOT_READY during this period
+    startup_delay: 3.0
+    
+    # Frame ID for status messages
+    frame_id: "base_link"
+    
+    # Default to autonomous mode when ready
+    # If false, waits for explicit engagement
+    default_to_autonomous: false

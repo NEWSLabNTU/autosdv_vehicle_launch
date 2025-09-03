@@ -1,0 +1,13 @@
+/**:
+  ros__parameters:
+    # Publishing rate in Hz
+    publish_rate: 30.0
+    
+    # Velocity threshold (m/s) to consider vehicle stopped
+    velocity_threshold: 0.1
+    
+    # Frame ID for status messages
+    frame_id: "base_link"
+    
+    # Enable gear command handling
+    enable_gear_commands: true
