@@ -11,6 +11,9 @@
     # Debug settings
     enable_debug_publishing: true
 
+    # Dry-run mode for simulation (disables PWM output)
+    dry_run: false
+
     ## PWM parameters
     # The initial PWM value when the vehicle stop.
     init_pwm: 340

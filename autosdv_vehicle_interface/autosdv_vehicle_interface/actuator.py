@@ -194,6 +194,9 @@ class AutoSdvActuator(Node):
         # Debugging options
         self.declare_parameter("enable_debug_publishing", Parameter.Type.BOOL)
 
+        # Dry-run mode for simulation
+        self.declare_parameter("dry_run", Parameter.Type.BOOL)
+
         # Longitudinal control parameters
         self.declare_parameter("kp_speed", Parameter.Type.DOUBLE)
         self.declare_parameter("ki_speed", Parameter.Type.DOUBLE)
@@ -245,6 +248,13 @@ class AutoSdvActuator(Node):
         # Debug settings
         params["enable_debug_publishing"] = (
             self.get_parameter("enable_debug_publishing")
+            .get_parameter_value()
+            .bool_value
+        )
+
+        # Dry-run mode
+        params["dry_run"] = (
+            self.get_parameter("dry_run")
             .get_parameter_value()
             .bool_value
         )
@@ -398,8 +408,15 @@ class AutoSdvActuator(Node):
             params: Dictionary with parameter values
 
         Returns:
-            PCA9685: PWM driver object
+            PCA9685: PWM driver object or None if in dry-run mode
         """
+        # Store dry-run mode
+        self.dry_run = params.get("dry_run", False)
+
+        if self.dry_run:
+            self.get_logger().warn("DRY-RUN MODE ENABLED - No PWM output will be sent to hardware")
+            return None
+
         driver = PCA9685(address=params["i2c_address"], busnum=params["i2c_busnum"])
         driver.set_pwm_freq(params["pwm_freq"])
         return driver
@@ -507,10 +524,16 @@ class AutoSdvActuator(Node):
         pwm_value = self.convert_throttle_brake_to_pwm(throttle, brake, in_reverse)
 
         # Set the power of the DC motor
-        self.driver.set_pwm(0, 0, pwm_value)
+        if self.dry_run:
+            self.get_logger().debug(f"DRY-RUN: Would set motor PWM to {pwm_value}")
+        else:
+            self.driver.set_pwm(0, 0, pwm_value)
 
         # Set angle of the steering servo
-        self.driver.set_pwm(1, 0, steer_value)
+        if self.dry_run:
+            self.get_logger().debug(f"DRY-RUN: Would set steering PWM to {steer_value}")
+        else:
+            self.driver.set_pwm(1, 0, steer_value)
 
         # Publish debug information if enabled
         if (
