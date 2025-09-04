@@ -12,7 +12,11 @@ setup(
         (f"share/{package_name}", ["package.xml"]),
         (f"share/{package_name}/params", glob("params/*")),
     ],
-    install_requires=["setuptools"],
+    install_requires=[
+        "setuptools",
+        "Adafruit-PCA9685",
+        "simple-pid",
+    ],
     zip_safe=True,
     maintainer="habby",
     maintainer_email="a0979580915@gmail.com",
