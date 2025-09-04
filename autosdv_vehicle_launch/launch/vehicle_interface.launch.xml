@@ -1,13 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
+  <!-- Arguments -->
   <arg name="vehicle_id" default="$(env VEHICLE_ID default)"/>
+  <arg name="is_simulation" default="false" description="Enable simulation mode (disables PWM output)"/>
+  <arg name="launch_vehicle_interface" default="true"/>
 
-  <group>
+  <!-- Vehicle Interface -->
+  <group if="$(var launch_vehicle_interface)">
     <push-ros-namespace namespace="autosdv"/>
 
     <!-- Core vehicle interface nodes -->
     <node pkg="autosdv_vehicle_interface" exec="actuator" name="actuator_node" output="screen">
       <param from="$(find-pkg-share autosdv_vehicle_interface)/params/actuator.yaml"/>
+      <!-- Override dry_run parameter based on is_simulation flag -->
+      <param name="dry_run" value="$(var is_simulation)"/>
       <remap from="~/input/control_cmd" to="/control/command/control_cmd"/>
       <remap from="~/input/velocity_status" to="/vehicle/status/velocity_status"/>
     </node>
