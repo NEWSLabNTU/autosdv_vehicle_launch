@@ -191,9 +191,9 @@ class GearManager(Node):
         """
         self.requested_gear = msg.command
         
-        # Log gear command requests
+        # Log gear command requests (only at debug level to reduce noise)
         gear_name = self.get_gear_name(msg.command)
-        self.get_logger().info(f'Gear command received: {gear_name}')
+        self.get_logger().debug(f'Gear command received: {gear_name}')
         
         # Validate gear command feasibility
         if not self.is_gear_change_safe(msg.command):
