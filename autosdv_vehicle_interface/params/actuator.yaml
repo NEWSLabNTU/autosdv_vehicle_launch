@@ -16,7 +16,7 @@
 
     ## PWM parameters
     # The initial PWM value when the vehicle stop.
-    init_pwm: 340
+    init_pwm: 370
     # The minimum PWM value when the vehicle drives backward at the max speed.
     min_pwm: 230
     # The maximum PWM value when the vehicle drives forward at the max speed.
@@ -45,11 +45,11 @@
     steering_speed: 1.0
 
     # The initial value for the steering servo that makes the vehicle go straight.
-    init_steer: 470
+    init_steer: 400
     # The minimum control value for steering servo making the leftmost turn.
     min_steer: 350
     # The maximum control value for steering servo making the rightmost turn.
-    max_steer: 590
+    max_steer: 450
 
     # The ratio between the tire angle and the steer value
     tire_angle_to_steer_ratio: -2000.0
