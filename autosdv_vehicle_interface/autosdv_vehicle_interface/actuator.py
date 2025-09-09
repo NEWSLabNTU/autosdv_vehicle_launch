@@ -110,7 +110,7 @@ class AckermannPID:
         self.integral = max(self.min_output, min(self.integral, self.max_output))
 
         if delta_time > 0:
-            self.derivative = (-self.kd * (input_value - self.last_input)) / delta_time
+            self.derivative = (self.kd * (input_value - self.last_input)) / delta_time
         else:
             self.derivative = 0.0
 
@@ -127,7 +127,6 @@ class AckermannPID:
         """Reset the controller state."""
         self.proportional = 0.0
         self.integral = 0.0
-        self.integral = max(self.min_output, min(self.integral, self.max_output))
         self.derivative = 0.0
 
         self.last_error = 0.0
@@ -680,13 +679,10 @@ class AutoSdvActuator(Node):
         # Set target point for speed controller
         self.speed_controller.set_target_point(self.state.target_speed)
 
-        # Run controller to get acceleration delta
-        speed_control_accel_delta = self.speed_controller.run(
+        # Run controller to get target acceleration
+        self.state.speed_control_accel_target = self.speed_controller.run(
             self.state.current_speed, delta_time
         )
-
-        # Update target acceleration
-        self.state.speed_control_accel_target += speed_control_accel_delta
 
         # Limit acceleration to configured constraints
         max_accel = self.config.max_accel
@@ -706,13 +702,10 @@ class AutoSdvActuator(Node):
         # Set target for acceleration controller
         self.accel_controller.set_target_point(self.state.speed_control_accel_target)
 
-        # Run controller to get pedal delta
-        accel_control_pedal_delta = self.accel_controller.run(
+        # Run controller to get pedal position
+        self.state.accel_control_pedal_target = self.accel_controller.run(
             self.state.current_acceleration, delta_time
         )
-
-        # Update pedal target
-        self.state.accel_control_pedal_target += accel_control_pedal_delta
 
         # Limit pedal position to [-1, 1] range
         self.state.accel_control_pedal_target = max(
