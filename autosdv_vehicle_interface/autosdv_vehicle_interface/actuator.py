@@ -54,6 +54,8 @@ class AckermannPID:
         kd: float,
         min_output: float = -1.0,
         max_output: float = 1.0,
+        integral_limit: float = None,
+        enable_conditional_integration: bool = False,
     ):
         """
         Initialize a new PID controller.
@@ -64,6 +66,8 @@ class AckermannPID:
             kd: Derivative gain
             min_output: Minimum output value
             max_output: Maximum output value
+            integral_limit: Maximum integral accumulation (None = use max_output)
+            enable_conditional_integration: Stop integrating when output saturated
         """
         self.kp = kp
         self.ki = ki
@@ -71,6 +75,8 @@ class AckermannPID:
 
         self.min_output = min_output
         self.max_output = max_output
+        self.integral_limit = integral_limit if integral_limit is not None else max_output
+        self.enable_conditional_integration = enable_conditional_integration
 
         self.set_point = 0.0
 
@@ -78,6 +84,7 @@ class AckermannPID:
         self.proportional = 0.0
         self.integral = 0.0
         self.derivative = 0.0
+        self.is_saturated = False  # Track saturation state for conditional integration
 
         self.last_error = 0.0
         self.last_input = 0.0
@@ -105,17 +112,30 @@ class AckermannPID:
         error = self.set_point - input_value
 
         self.proportional = self.kp * error
-        self.integral += self.ki * error * delta_time
-        # Avoid integral windup
-        self.integral = max(self.min_output, min(self.integral, self.max_output))
 
+        # Conditional integration - only integrate if not saturated
+        if self.enable_conditional_integration:
+            if not self.is_saturated:
+                self.integral += self.ki * error * delta_time
+        else:
+            # Always integrate (existing behavior)
+            self.integral += self.ki * error * delta_time
+
+        # Clamp integral to separate limit (anti-windup)
+        self.integral = max(-self.integral_limit, min(self.integral, self.integral_limit))
+
+        # Derivative on measurement (not error) to reduce derivative kick
         if delta_time > 0:
             self.derivative = (self.kd * (input_value - self.last_input)) / delta_time
         else:
             self.derivative = 0.0
 
+        # Calculate output
         output = self.proportional + self.integral + self.derivative
+
+        # Clamp output and track saturation state
         output = max(self.min_output, min(output, self.max_output))
+        self.is_saturated = (output >= self.max_output or output <= self.min_output)
 
         # Keep track of state
         self.last_error = error
@@ -128,6 +148,7 @@ class AckermannPID:
         self.proportional = 0.0
         self.integral = 0.0
         self.derivative = 0.0
+        self.is_saturated = False
 
         self.last_error = 0.0
         self.last_input = 0.0
@@ -201,10 +222,23 @@ class AutoSdvActuator(Node):
         self.declare_parameter("ki_speed", Parameter.Type.DOUBLE)
         self.declare_parameter("kd_speed", Parameter.Type.DOUBLE)
 
+        # Anti-windup configuration
+        self.declare_parameter("integral_limit", Parameter.Type.DOUBLE)
+        self.declare_parameter("enable_conditional_integration", Parameter.Type.BOOL)
+
+        # Deadbands and thresholds
+        self.declare_parameter("velocity_deadband", Parameter.Type.DOUBLE)
+        self.declare_parameter("full_stop_threshold", Parameter.Type.DOUBLE)
+
+        # Velocity filtering
+        self.declare_parameter("velocity_measurement_filter_alpha", Parameter.Type.DOUBLE)
+        self.declare_parameter("velocity_command_filter_alpha", Parameter.Type.DOUBLE)
 
         self.declare_parameter("min_pwm", Parameter.Type.INTEGER)
         self.declare_parameter("init_pwm", Parameter.Type.INTEGER)
         self.declare_parameter("max_pwm", Parameter.Type.INTEGER)
+        self.declare_parameter("brake_pwm", Parameter.Type.INTEGER)
+        self.declare_parameter("brake_threshold", Parameter.Type.DOUBLE)
 
         # Steering control parameters
         self.declare_parameter("steering_speed", Parameter.Type.DOUBLE)
@@ -262,6 +296,12 @@ class AutoSdvActuator(Node):
         params["max_pwm"] = (
             self.get_parameter("max_pwm").get_parameter_value().integer_value
         )
+        params["brake_pwm"] = (
+            self.get_parameter("brake_pwm").get_parameter_value().integer_value
+        )
+        params["brake_threshold"] = (
+            self.get_parameter("brake_threshold").get_parameter_value().double_value
+        )
 
         # Steering parameters
         params["min_steer"] = (
@@ -298,6 +338,36 @@ class AutoSdvActuator(Node):
             self.get_parameter("kd_speed").get_parameter_value().double_value
         )
 
+        # Anti-windup configuration
+        params["integral_limit"] = (
+            self.get_parameter("integral_limit").get_parameter_value().double_value
+        )
+        params["enable_conditional_integration"] = (
+            self.get_parameter("enable_conditional_integration")
+            .get_parameter_value()
+            .bool_value
+        )
+
+        # Deadbands and thresholds
+        params["velocity_deadband"] = (
+            self.get_parameter("velocity_deadband").get_parameter_value().double_value
+        )
+        params["full_stop_threshold"] = (
+            self.get_parameter("full_stop_threshold").get_parameter_value().double_value
+        )
+
+        # Velocity filtering
+        params["velocity_measurement_filter_alpha"] = (
+            self.get_parameter("velocity_measurement_filter_alpha")
+            .get_parameter_value()
+            .double_value
+        )
+        params["velocity_command_filter_alpha"] = (
+            self.get_parameter("velocity_command_filter_alpha")
+            .get_parameter_value()
+            .double_value
+        )
+
         return params
 
     def create_config(self, params):
@@ -314,6 +384,7 @@ class AutoSdvActuator(Node):
             min_pwm=params["min_pwm"],
             init_pwm=params["init_pwm"],
             max_pwm=params["max_pwm"],
+            brake_pwm=params["brake_pwm"],
             min_steer=params["min_steer"],
             init_steer=params["init_steer"],
             max_steer=params["max_steer"],
@@ -333,14 +404,23 @@ class AutoSdvActuator(Node):
         # Output range: -90 to +90 (for PWM range 370±90 = 280-460)
         pwm_range = params["max_pwm"] - params["min_pwm"]
         max_pwm_offset = pwm_range // 2
-        
+
         self.speed_controller = AckermannPID(
             kp=params["kp_speed"],
             ki=params["ki_speed"],
             kd=params["kd_speed"],
             min_output=-max_pwm_offset,
             max_output=max_pwm_offset,
+            integral_limit=params["integral_limit"],
+            enable_conditional_integration=params["enable_conditional_integration"],
         )
+
+        # Store filtering and deadband parameters as instance variables
+        self.velocity_deadband = params["velocity_deadband"]
+        self.full_stop_threshold = params["full_stop_threshold"]
+        self.brake_threshold = params["brake_threshold"]
+        self.vel_meas_alpha = params["velocity_measurement_filter_alpha"]
+        self.vel_cmd_alpha = params["velocity_command_filter_alpha"]
 
     def initialize_state(self):
         """
@@ -471,6 +551,29 @@ class AutoSdvActuator(Node):
         current_time = time.time()
         delta_time = current_time - self.state.last_update_time
 
+        # Apply velocity filtering (exponential moving average)
+        if self.state.current_speed is not None:
+            raw_measured_velocity = self.state.current_speed
+            if self.state.filtered_measured_velocity == 0.0:
+                # Initialize on first call
+                self.state.filtered_measured_velocity = raw_measured_velocity
+            else:
+                self.state.filtered_measured_velocity = (
+                    self.vel_meas_alpha * raw_measured_velocity +
+                    (1.0 - self.vel_meas_alpha) * self.state.filtered_measured_velocity
+                )
+
+        if self.state.target_speed is not None:
+            raw_target_velocity = self.state.target_speed
+            if self.state.filtered_target_velocity == 0.0:
+                # Initialize on first call
+                self.state.filtered_target_velocity = raw_target_velocity
+            else:
+                self.state.filtered_target_velocity = (
+                    self.vel_cmd_alpha * raw_target_velocity +
+                    (1.0 - self.vel_cmd_alpha) * self.state.filtered_target_velocity
+                )
+
         # Lateral Control (Steering)
         steer_value = self.run_steering_control(delta_time)
 
@@ -556,16 +659,33 @@ class AutoSdvActuator(Node):
         if self.state.target_speed is None or self.state.current_speed is None:
             return self.config.init_pwm
 
+        # Check if we need to apply brake when coming to a stop
+        if (abs(self.state.target_speed) < self.full_stop_threshold and
+            abs(self.state.current_speed) > self.brake_threshold):
+            # Target is near zero but vehicle is moving - apply brake
+            self.get_logger().debug(f"Applying brake: target={self.state.target_speed:.2f}, current={self.state.current_speed:.2f}")
+            return self.config.brake_pwm
+
         # Check for full stop condition
         if self.run_control_full_stop():
             return self.config.init_pwm
 
+        # Use filtered velocities for control
+        target_velocity = self.state.filtered_target_velocity
+        current_velocity = self.state.filtered_measured_velocity
+
+        # Apply velocity deadband - ignore small errors to prevent jitter
+        velocity_error = abs(target_velocity - current_velocity)
+        if velocity_error < self.velocity_deadband:
+            # Within deadband - maintain current PWM to avoid jitter
+            return self.state.last_pwm_value
+
         # Handle reverse control logic
         self.run_control_reverse()
 
-        # Run speed PID controller to get PWM offset
-        self.speed_controller.set_target_point(self.state.target_speed)
-        pwm_offset = self.speed_controller.run(self.state.current_speed, delta_time)
+        # Run speed PID controller to get PWM offset using filtered velocities
+        self.speed_controller.set_target_point(target_velocity)
+        pwm_offset = self.speed_controller.run(current_velocity, delta_time)
 
         # Store pwm_offset for debug publishing
         self.state.speed_control_pwm_offset = pwm_offset
@@ -581,6 +701,9 @@ class AutoSdvActuator(Node):
         # Clamp to valid PWM range
         pwm_value = max(self.config.min_pwm, min(self.config.max_pwm, pwm_value))
 
+        # Store for next iteration
+        self.state.last_pwm_value = pwm_value
+
         return pwm_value
 
     def run_control_full_stop(self) -> bool:
@@ -590,13 +713,11 @@ class AutoSdvActuator(Node):
         Returns:
             bool: True if full stop should be applied
         """
-        # Epsilon threshold for considering vehicle stopped
-        full_stop_epsilon = 0.1  # [m/s]
-
+        # Use configurable threshold for considering vehicle stopped
         # Check if both current and target speeds are near zero
         if (
-            abs(self.state.current_speed) < full_stop_epsilon
-            and abs(self.state.target_speed) < full_stop_epsilon
+            abs(self.state.current_speed) < self.full_stop_threshold
+            and abs(self.state.target_speed) < self.full_stop_threshold
         ):
             return True
 
@@ -667,9 +788,11 @@ class AutoSdvActuator(Node):
     def publish_debug_control_values(self):
         """
         Publish debug information about control values.
-        
+
         Publishes PWM offset and direction information.
         """
+        import math
+
         msg = Float32MultiArrayStamped()
 
         # Add timestamp
@@ -681,9 +804,14 @@ class AutoSdvActuator(Node):
         msg.layout.dim[0].size = 2
         msg.layout.dim[0].stride = 2
 
+        # Sanitize values to prevent NaN/Inf
+        pwm_offset = self.state.speed_control_pwm_offset
+        if not math.isfinite(pwm_offset):
+            pwm_offset = 0.0
+
         # Add data: [pwm_offset, in_reverse]
         msg.data = [
-            self.state.speed_control_pwm_offset,
+            float(pwm_offset),
             1.0 if self.state.in_reverse else 0.0
         ]
 
@@ -752,15 +880,20 @@ class AutoSdvActuator(Node):
             else 0.0
         )
 
+        # Sanitize PID values to prevent NaN/Inf
+        import math
+        def sanitize(value):
+            return float(value) if math.isfinite(value) else 0.0
+
         msg.data = [
-            target_speed,
-            current_speed,
-            target_tire_angle,
-            current_tire_angle,
-            self.speed_controller.proportional,
-            self.speed_controller.integral,
-            self.speed_controller.derivative,
-            self.state.speed_control_pwm_offset,
+            sanitize(target_speed),
+            sanitize(current_speed),
+            sanitize(target_tire_angle),
+            sanitize(current_tire_angle),
+            sanitize(self.speed_controller.proportional),
+            sanitize(self.speed_controller.integral),
+            sanitize(self.speed_controller.derivative),
+            sanitize(self.state.speed_control_pwm_offset),
         ]
 
         # Publish message
@@ -808,6 +941,10 @@ class State:
     transition_target: Optional[MotorState]
     brake_threshold: int
 
+    # Filtered velocities for PID control (with defaults)
+    filtered_measured_velocity: float = 0.0
+    filtered_target_velocity: float = 0.0
+
 
 @dataclass
 class Config:
@@ -818,6 +955,7 @@ class Config:
         min_pwm: Minimum PWM value for backward movement
         init_pwm: Initial PWM value (stopped)
         max_pwm: Maximum PWM value for forward movement
+        brake_pwm: PWM value for active braking
         min_steer: Minimum steering PWM value (left turn)
         init_steer: Initial steering PWM value (straight)
         max_steer: Maximum steering PWM value (right turn)
@@ -829,6 +967,7 @@ class Config:
     min_pwm: int
     init_pwm: int
     max_pwm: int
+    brake_pwm: int
 
     min_steer: int
     init_steer: int

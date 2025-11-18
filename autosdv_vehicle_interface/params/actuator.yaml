@@ -27,18 +27,39 @@
     # Brake sequence PWM value (used for forward-to-backward transition)
     brake_pwm: 340
 
+    # Brake threshold - minimum speed to trigger active braking when target is zero
+    brake_threshold: 0.2  # m/s - threshold for considering significant motion
+
     ## Ackermann control - longitudinal
     # PID controller parameters for speed control (outputs PWM offset directly)
     # Output range: -50 to +50 (for PWM range 390±50 = 340-440)
     # Deadzone: 390±5 (385-395 is neutral zone)
     # Forward motion starts at PWM 395, backward at PWM 385
+    #
+    # NOTE: Velocity measurement uses edge-to-edge timing (smooth, continuous)
+    # velocity_report.py already filters with alpha=0.3, so minimal filtering here
+    # PID tuned for fast response with good stability
     # Tuning guide:
     #   - Increase kp for more responsive acceleration
     #   - Add ki to eliminate steady-state speed error
     #   - Increase kd to reduce oscillation and overshoot
-    kp_speed: 0.1
-    ki_speed: 0.1
-    kd_speed: 0.001
+    kp_speed: 6.0
+    ki_speed: 1.5
+    kd_speed: 0.3
+
+    # Anti-windup configuration
+    integral_limit: 40.0                    # Maximum integral accumulation (PWM units)
+    enable_conditional_integration: true    # Stop integrating when PWM saturated
+
+    # Deadbands and thresholds
+    velocity_deadband: 0.1                  # m/s - small deadband since velocity is now smooth
+    full_stop_threshold: 0.2                # m/s - threshold for considering vehicle stopped
+
+    # Velocity filtering (exponential moving average)
+    # Alpha values: 0 = heavy filtering, 1 = no filtering
+    # Light filtering since velocity_report.py already smooths with edge-to-edge timing
+    velocity_measurement_filter_alpha: 0.7  # Minimal additional filtering
+    velocity_command_filter_alpha: 0.9      # Fast response to target speed changes
 
     ## Ackermann control - steering
     # Maximum steering angle [rad]
