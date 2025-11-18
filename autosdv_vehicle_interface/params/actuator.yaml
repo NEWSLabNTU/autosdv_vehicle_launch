@@ -38,27 +38,28 @@
     #
     # NOTE: Velocity measurement uses edge-to-edge timing (smooth, continuous)
     # velocity_report.py already filters with alpha=0.3, so minimal filtering here
-    # PID tuned for fast response with good stability
+    # PID tuned for smooth, stable control with heavily filtered derivative and PWM output
+    # PWM output filter (alpha=0.25) and derivative filter (alpha=0.15) provide smoothing
     # Tuning guide:
     #   - Increase kp for more responsive acceleration
     #   - Add ki to eliminate steady-state speed error
     #   - Increase kd to reduce oscillation and overshoot
-    kp_speed: 6.0
-    ki_speed: 1.5
+    kp_speed: 2.5
+    ki_speed: 0.6
     kd_speed: 0.3
 
     # Anti-windup configuration
-    integral_limit: 40.0                    # Maximum integral accumulation (PWM units)
+    integral_limit: 30.0                    # Maximum integral accumulation (PWM units)
     enable_conditional_integration: true    # Stop integrating when PWM saturated
 
     # Deadbands and thresholds
-    velocity_deadband: 0.1                  # m/s - small deadband since velocity is now smooth
+    velocity_deadband: 0.15                 # m/s - small deadband to reduce jitter
     full_stop_threshold: 0.2                # m/s - threshold for considering vehicle stopped
 
     # Velocity filtering (exponential moving average)
     # Alpha values: 0 = heavy filtering, 1 = no filtering
-    # Light filtering since velocity_report.py already smooths with edge-to-edge timing
-    velocity_measurement_filter_alpha: 0.7  # Minimal additional filtering
+    # Moderate filtering to balance responsiveness with noise rejection
+    velocity_measurement_filter_alpha: 0.5  # Moderate filtering to smooth oscillations
     velocity_command_filter_alpha: 0.9      # Fast response to target speed changes
 
     ## Ackermann control - steering
