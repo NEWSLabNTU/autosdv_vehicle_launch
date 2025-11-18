@@ -4,13 +4,15 @@
   <arg name="vehicle_id" default="$(env VEHICLE_ID default)"/>
   <arg name="is_simulation" default="false" description="Enable simulation mode (disables PWM output)"/>
   <arg name="launch_vehicle_interface" default="true"/>
+  <arg name="actuator_log_level" default="info" description="Log level for actuator node (debug/info/warn/error/fatal)"/>
 
   <!-- Vehicle Interface -->
   <group if="$(var launch_vehicle_interface)">
     <push-ros-namespace namespace="autosdv"/>
 
     <!-- Core vehicle interface nodes -->
-    <node pkg="autosdv_vehicle_interface" exec="actuator" name="actuator_node" output="screen">
+    <node pkg="autosdv_vehicle_interface" exec="actuator" name="actuator_node" output="screen"
+          args="--ros-args --log-level $(var actuator_log_level)">
       <param from="$(find-pkg-share autosdv_vehicle_interface)/params/actuator.yaml"/>
       <!-- Override dry_run parameter based on is_simulation flag -->
       <param name="dry_run" value="$(var is_simulation)"/>

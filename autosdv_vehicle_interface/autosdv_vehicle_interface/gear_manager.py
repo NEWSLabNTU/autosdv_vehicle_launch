@@ -242,8 +242,18 @@ class GearManager(Node):
         """
         Publish current gear status at regular intervals.
         """
-        # Update gear based on current motor state
-        new_gear = self.map_motor_state_to_gear()
+        # If vehicle is stopped and gear command is received, honor the command
+        # Otherwise, infer gear from motor state
+        if abs(self.current_velocity) < self.velocity_threshold and self.motor_state == MotorState.STOPPED:
+            # Vehicle is stopped - honor gear command if safe
+            if self.requested_gear != GearReport.NONE and self.is_gear_change_safe(self.requested_gear):
+                new_gear = self.requested_gear
+            else:
+                # Fall back to inferring from motor state
+                new_gear = self.map_motor_state_to_gear()
+        else:
+            # Vehicle is moving - infer gear from motor state
+            new_gear = self.map_motor_state_to_gear()
         
         # Log gear changes
         if new_gear != self.current_gear:

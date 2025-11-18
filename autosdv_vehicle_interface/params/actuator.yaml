@@ -14,28 +14,31 @@
     # Dry-run mode for simulation (disables PWM output)
     dry_run: false
 
-    ## PWM parameters
-    # The initial PWM value when the vehicle stop.
-    init_pwm: 370
-    # The minimum PWM value when the vehicle drives backward at the max speed.
-    min_pwm: 230
-    # The maximum PWM value when the vehicle drives forward at the max speed.
-    max_pwm: 460
+    ## PWM parameters (calibrated 2025-11-18)
+    # The initial PWM value when the vehicle stops.
+    init_pwm: 390
+    # The minimum PWM value when the vehicle drives backward at max speed.
+    # Note: Vehicle starts moving backward at 385, brake position is 340
+    min_pwm: 340
+    # The maximum PWM value when the vehicle drives forward at max speed.
+    # Note: Vehicle starts moving forward at 395
+    max_pwm: 440
+
+    # Brake sequence PWM value (used for forward-to-backward transition)
+    brake_pwm: 340
 
     ## Ackermann control - longitudinal
-    # PID controller parameters for speed control (outer loop)
-    kp_speed: 15.0
-    ki_speed: 0.0
-    kd_speed: 0.05
-
-    # PID controller parameters for acceleration control (inner loop)
-    kp_accel: 0.01
-    ki_accel: 0.0
-    kd_accel: 0.01
-
-    # Maximum acceleration and deceleration constraints [m/s²]
-    max_accel: 3.0
-    max_decel: 8.0
+    # PID controller parameters for speed control (outputs PWM offset directly)
+    # Output range: -50 to +50 (for PWM range 390±50 = 340-440)
+    # Deadzone: 390±5 (385-395 is neutral zone)
+    # Forward motion starts at PWM 395, backward at PWM 385
+    # Tuning guide:
+    #   - Increase kp for more responsive acceleration
+    #   - Add ki to eliminate steady-state speed error
+    #   - Increase kd to reduce oscillation and overshoot
+    kp_speed: 0.1
+    ki_speed: 0.1
+    kd_speed: 0.001
 
     ## Ackermann control - steering
     # Maximum steering angle [rad]
@@ -46,10 +49,14 @@
 
     # The initial value for the steering servo that makes the vehicle go straight.
     init_steer: 400
-    # The minimum control value for steering servo making the leftmost turn.
+    # The minimum control value for steering servo (RIGHT turn - reversed hardware).
     min_steer: 350
-    # The maximum control value for steering servo making the rightmost turn.
+    # The maximum control value for steering servo (LEFT turn - reversed hardware).
     max_steer: 450
 
+    # Note: Steering direction is REVERSED in hardware
+    # Lower PWM (350) = RIGHT turn, Higher PWM (450) = LEFT turn
+
     # The ratio between the tire angle and the steer value
-    tire_angle_to_steer_ratio: -2000.0
+    # Positive value to compensate for reversed steering hardware
+    tire_angle_to_steer_ratio: 2000.0

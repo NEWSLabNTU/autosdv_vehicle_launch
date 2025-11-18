@@ -201,12 +201,6 @@ class AutoSdvActuator(Node):
         self.declare_parameter("ki_speed", Parameter.Type.DOUBLE)
         self.declare_parameter("kd_speed", Parameter.Type.DOUBLE)
 
-        self.declare_parameter("kp_accel", Parameter.Type.DOUBLE)
-        self.declare_parameter("ki_accel", Parameter.Type.DOUBLE)
-        self.declare_parameter("kd_accel", Parameter.Type.DOUBLE)
-
-        self.declare_parameter("max_accel", Parameter.Type.DOUBLE)
-        self.declare_parameter("max_decel", Parameter.Type.DOUBLE)
 
         self.declare_parameter("min_pwm", Parameter.Type.INTEGER)
         self.declare_parameter("init_pwm", Parameter.Type.INTEGER)
@@ -286,12 +280,6 @@ class AutoSdvActuator(Node):
         )
 
         # Ackermann parameters
-        params["max_accel"] = (
-            self.get_parameter("max_accel").get_parameter_value().double_value
-        )
-        params["max_decel"] = (
-            self.get_parameter("max_decel").get_parameter_value().double_value
-        )
         params["steering_speed"] = (
             self.get_parameter("steering_speed").get_parameter_value().double_value
         )
@@ -308,17 +296,6 @@ class AutoSdvActuator(Node):
         )
         params["kd_speed"] = (
             self.get_parameter("kd_speed").get_parameter_value().double_value
-        )
-
-        # PID controller parameters - acceleration
-        params["kp_accel"] = (
-            self.get_parameter("kp_accel").get_parameter_value().double_value
-        )
-        params["ki_accel"] = (
-            self.get_parameter("ki_accel").get_parameter_value().double_value
-        )
-        params["kd_accel"] = (
-            self.get_parameter("kd_accel").get_parameter_value().double_value
         )
 
         return params
@@ -341,35 +318,28 @@ class AutoSdvActuator(Node):
             init_steer=params["init_steer"],
             max_steer=params["max_steer"],
             tire_angle_to_steer_ratio=params["tire_angle_to_steer_ratio"],
-            max_accel=params["max_accel"],
-            max_decel=params["max_decel"],
             steering_speed=params["steering_speed"],
             max_steering_angle=params["max_steering_angle"],
         )
 
     def initialize_pid_controllers(self, params):
         """
-        Initialize the PID controllers.
+        Initialize the PID controller for speed control.
 
         Args:
             params: Dictionary with parameter values
         """
-        # 1. Speed controller (outer loop) - determines target acceleration
+        # Speed controller - outputs PWM offset directly
+        # Output range: -90 to +90 (for PWM range 370±90 = 280-460)
+        pwm_range = params["max_pwm"] - params["min_pwm"]
+        max_pwm_offset = pwm_range // 2
+        
         self.speed_controller = AckermannPID(
             kp=params["kp_speed"],
             ki=params["ki_speed"],
             kd=params["kd_speed"],
-            min_output=-params["max_decel"],
-            max_output=params["max_accel"],
-        )
-
-        # 2. Acceleration controller (inner loop) - determines throttle/brake
-        self.accel_controller = AckermannPID(
-            kp=params["kp_accel"],
-            ki=params["ki_accel"],
-            kd=params["kd_accel"],
-            min_output=-1.0,  # Full brake
-            max_output=1.0,  # Full throttle
+            min_output=-max_pwm_offset,
+            max_output=max_pwm_offset,
         )
 
     def initialize_state(self):
@@ -384,12 +354,9 @@ class AutoSdvActuator(Node):
             current_speed=None,
             target_tire_angle=None,
             current_tire_angle=None,
-            # Ackermann specific state
-            speed_control_accel_target=0.0,
-            accel_control_pedal_target=0.0,
-            current_acceleration=0.0,
+            # Control state
+            speed_control_pwm_offset=0.0,
             last_speed=0.0,
-            last_acceleration=0.0,
             in_reverse=False,
             last_update_time=time.time(),
             # Motor state machine
@@ -416,9 +383,15 @@ class AutoSdvActuator(Node):
             self.get_logger().warn("DRY-RUN MODE ENABLED - No PWM output will be sent to hardware")
             return None
 
-        driver = PCA9685(address=params["i2c_address"], busnum=params["i2c_busnum"])
-        driver.set_pwm_freq(params["pwm_freq"])
-        return driver
+        try:
+            driver = PCA9685(address=params["i2c_address"], busnum=params["i2c_busnum"])
+            driver.set_pwm_freq(params["pwm_freq"])
+            self.get_logger().info(f"PCA9685 initialized successfully on I2C bus {params['i2c_busnum']}, address 0x{params['i2c_address']:02x}")
+            return driver
+        except Exception as e:
+            self.get_logger().error(f"Failed to initialize PCA9685: {e}")
+            self.get_logger().error("Motor control will not work! Check I2C connections.")
+            return None
 
     def setup_subscriptions(self):
         """Set up subscriptions to ROS topics."""
@@ -454,7 +427,7 @@ class AutoSdvActuator(Node):
     def velocity_callback(self, msg):
         """
         Callback for velocity report messages.
-        Updates the current speed state and calculates acceleration.
+        Updates the current speed.
 
         Args:
             msg: VelocityReport message containing current vehicle speed
@@ -468,20 +441,8 @@ class AutoSdvActuator(Node):
         speed = msg.longitudinal_velocity
         self.state.current_speed = speed
 
-        # Calculate time delta
-        current_time = time.time()
-        delta_time = current_time - self.state.last_update_time
-
-        # Calculate acceleration with smoothing (using a low-pass filter like CARLA does)
-        if delta_time > 0 and self.state.current_speed is not None:
-            raw_accel = (self.state.current_speed - self.state.last_speed) / delta_time
-            # Apply low-pass filter: new_value = 0.8*old_value + 0.2*new_measurement
-            self.state.current_acceleration = (
-                0.8 * self.state.last_acceleration + 0.2 * raw_accel
-            )
-            self.state.last_acceleration = self.state.current_acceleration
-
         # Update timestamp
+        current_time = time.time()
         self.state.last_update_time = current_time
 
     def control_callback(self, msg):
@@ -513,26 +474,33 @@ class AutoSdvActuator(Node):
         # Lateral Control (Steering)
         steer_value = self.run_steering_control(delta_time)
 
-        # Longitudinal Control (Throttle/Brake)
-        throttle, brake, in_reverse = self.run_longitudinal_control(delta_time)
-
-        # Update PWM values for the hardware
-        self.state.in_reverse = in_reverse
-
-        # Calculate the actual PWM values
-        pwm_value = self.convert_throttle_brake_to_pwm(throttle, brake, in_reverse)
+        # Longitudinal Control (Direct PWM Output)
+        pwm_value = self.run_longitudinal_control(delta_time)
 
         # Set the power of the DC motor
         if self.dry_run:
             self.get_logger().debug(f"DRY-RUN: Would set motor PWM to {pwm_value}")
         else:
-            self.driver.set_pwm(0, 0, pwm_value)
+            try:
+                if self.driver is not None:
+                    self.driver.set_pwm(0, 0, pwm_value)
+                    self.get_logger().debug(f"Motor PWM set to {pwm_value}")
+                else:
+                    self.get_logger().error("PWM driver is None - hardware not initialized!")
+            except Exception as e:
+                self.get_logger().error(f"Failed to set motor PWM: {e}")
 
         # Set angle of the steering servo
         if self.dry_run:
             self.get_logger().debug(f"DRY-RUN: Would set steering PWM to {steer_value}")
         else:
-            self.driver.set_pwm(1, 0, steer_value)
+            try:
+                if self.driver is not None:
+                    self.driver.set_pwm(1, 0, steer_value)
+                else:
+                    self.get_logger().error("PWM driver is None - hardware not initialized!")
+            except Exception as e:
+                self.get_logger().error(f"Failed to set steering PWM: {e}")
 
         # Publish debug information if enabled
         if (
@@ -540,7 +508,7 @@ class AutoSdvActuator(Node):
             .get_parameter_value()
             .bool_value
         ):
-            self.publish_debug_control_values(throttle, brake, in_reverse)
+            self.publish_debug_control_values()
             self.publish_debug_pwm_values(pwm_value, steer_value)
             self.publish_debug_pid_values()
 
@@ -571,37 +539,49 @@ class AutoSdvActuator(Node):
 
         return steer_pwm
 
-    def run_longitudinal_control(self, delta_time: float) -> Tuple[float, float, bool]:
+    def run_longitudinal_control(self, delta_time: float) -> int:
         """
-        Implements the longitudinal control logic (throttle/brake) using cascaded PID controllers.
+        Implements the longitudinal control logic using direct PWM output.
+
+        Uses a single PID controller that maps speed error directly to PWM offset,
+        which is then added to the init_pwm value to get the final PWM output.
 
         Args:
             delta_time: Time since last update in seconds
 
         Returns:
-            Tuple[float, float, bool]: Throttle (0-1), brake (0-1), and reverse flag
+            int: PWM value for motor (clamped to min_pwm/max_pwm range)
         """
-        # Return zeros if we don't have necessary state information
+        # Return init PWM if we don't have necessary state information
         if self.state.target_speed is None or self.state.current_speed is None:
-            return 0.0, 0.0, False
+            return self.config.init_pwm
 
         # Check for full stop condition
         if self.run_control_full_stop():
-            return 0.0, 1.0, False  # Zero throttle, full brake
+            return self.config.init_pwm
 
-        # Handle reverse control
+        # Handle reverse control logic
         self.run_control_reverse()
 
-        # Run speed controller to get target acceleration
-        self.run_control_speed(delta_time)
+        # Run speed PID controller to get PWM offset
+        self.speed_controller.set_target_point(self.state.target_speed)
+        pwm_offset = self.speed_controller.run(self.state.current_speed, delta_time)
 
-        # Run acceleration controller to get pedal position
-        self.run_control_acceleration(delta_time)
+        # Store pwm_offset for debug publishing
+        self.state.speed_control_pwm_offset = pwm_offset
 
-        # Convert to throttle and brake commands
-        throttle, brake = self.update_throttle_brake()
+        # Calculate final PWM value based on direction
+        if self.state.in_reverse:
+            # Reverse: subtract offset from init_pwm
+            pwm_value = int(self.config.init_pwm - pwm_offset)
+        else:
+            # Forward: add offset to init_pwm
+            pwm_value = int(self.config.init_pwm + pwm_offset)
 
-        return throttle, brake, self.state.in_reverse
+        # Clamp to valid PWM range
+        pwm_value = max(self.config.min_pwm, min(self.config.max_pwm, pwm_value))
+
+        return pwm_value
 
     def run_control_full_stop(self) -> bool:
         """
@@ -669,207 +649,14 @@ class AutoSdvActuator(Node):
                         # Prepare for forward
                         self.state.in_reverse = False
 
-    def run_control_speed(self, delta_time: float) -> None:
-        """
-        Run the speed controller to calculate target acceleration.
-
-        Args:
-            delta_time: Time since last update in seconds
-        """
-        # Set target point for speed controller
-        self.speed_controller.set_target_point(self.state.target_speed)
-
-        # Run controller to get target acceleration
-        self.state.speed_control_accel_target = self.speed_controller.run(
-            self.state.current_speed, delta_time
-        )
-
-        # Limit acceleration to configured constraints
-        max_accel = self.config.max_accel
-        max_decel = self.config.max_decel
-
-        self.state.speed_control_accel_target = max(
-            -max_decel, min(self.state.speed_control_accel_target, max_accel)
-        )
-
-    def run_control_acceleration(self, delta_time: float) -> None:
-        """
-        Run the acceleration controller to calculate pedal position.
-
-        Args:
-            delta_time: Time since last update in seconds
-        """
-        # Set target for acceleration controller
-        self.accel_controller.set_target_point(self.state.speed_control_accel_target)
-
-        # Run controller to get pedal position
-        self.state.accel_control_pedal_target = self.accel_controller.run(
-            self.state.current_acceleration, delta_time
-        )
-
-        # Limit pedal position to [-1, 1] range
-        self.state.accel_control_pedal_target = max(
-            -1.0, min(self.state.accel_control_pedal_target, 1.0)
-        )
-
-    def update_throttle_brake(self) -> Tuple[float, float]:
-        """
-        Convert the pedal target to throttle and brake commands.
-
-        Uses state machine logic to properly handle throttle/brake conversion
-        based on current motor state and desired direction.
-
-        Returns:
-            Tuple[float, float]: Throttle value (0-1) and brake value (0-1)
-        """
-        pedal_target = self.state.accel_control_pedal_target
-        throttle = 0.0
-        brake = 0.0
-
-        # Handle based on pedal target and current state
-        if pedal_target < -0.05:  # Significant negative pedal
-            if self.state.in_reverse:
-                # In reverse mode, negative pedal = throttle (reverse)
-                throttle = abs(pedal_target)
-                brake = 0.0
-            else:
-                # In forward mode, negative pedal = brake
-                throttle = 0.0
-                brake = abs(pedal_target)
-
-        elif pedal_target > 0.05:  # Significant positive pedal
-            if self.state.in_reverse:
-                # In reverse mode, positive pedal = brake
-                throttle = 0.0
-                brake = abs(pedal_target)
-            else:
-                # In forward mode, positive pedal = throttle (forward)
-                throttle = abs(pedal_target)
-                brake = 0.0
-        else:
-            # Near zero pedal target = coast/idle
-            throttle = 0.0
-            brake = 0.0
-
-        # Limit values to [0, 1] range
-        throttle = max(0.0, min(throttle, 1.0))
-        brake = max(0.0, min(brake, 1.0))
-
-        return throttle, brake
-
-    def convert_throttle_brake_to_pwm(
-        self, throttle: float, brake: float, in_reverse: bool
-    ) -> int:
-        """
-        Convert throttle and brake values to a PWM value for the motor using state machine.
-
-        This respects the RC car's special PWM braking behavior:
-        - When moving forward and brake is applied, motor may lock
-        - To go backward from brake lock, must first return to init_pwm
-        - Only then can PWM decrease for backward motion
-
-        Args:
-            throttle: Throttle value (0-1)
-            brake: Brake value (0-1)
-            in_reverse: Whether vehicle is in reverse gear
-
-        Returns:
-            int: PWM value for the motor
-        """
-        # Determine desired motor state
-        desired_state = self._determine_desired_motor_state(throttle, brake, in_reverse)
-
-        # Handle state transitions and get PWM
-        pwm_value = self._handle_motor_state_transition(desired_state, throttle, brake)
-
-        # Update motor state tracking
-        self._update_motor_state(pwm_value, desired_state)
-
-        return pwm_value
-
-    def _determine_desired_motor_state(self, throttle: float, brake: float, in_reverse: bool) -> MotorState:
-        """Determine the desired motor state based on control inputs."""
-        if brake > 0.1:  # Significant brake command
-            return MotorState.BRAKE_LOCKED
-        elif throttle > 0.05:  # Significant throttle command
-            if in_reverse:
-                return MotorState.BACKWARD
-            else:
-                return MotorState.FORWARD
-        else:
-            return MotorState.STOPPED
-
-    def _handle_motor_state_transition(self, desired_state: MotorState, throttle: float, brake: float) -> int:
-        """Handle motor state transitions and return appropriate PWM value."""
-        current_state = self.state.motor_state
-
-        # Critical transition: BRAKE_LOCKED -> BACKWARD
-        if current_state == MotorState.BRAKE_LOCKED and desired_state == MotorState.BACKWARD:
-            return self._handle_brake_to_reverse_transition(throttle)
-
-        # Other transitions or steady states
-        return self._calculate_pwm_for_state(desired_state, throttle, brake)
-
-    def _handle_brake_to_reverse_transition(self, throttle: float) -> int:
-        """Handle the special transition from brake lock to reverse."""
-        init_pwm = self.config.init_pwm
-        current_pwm = self.state.last_pwm_value
-
-        # Check if we're close enough to init_pwm
-        if abs(current_pwm - init_pwm) <= 5:  # Within 5 PWM units
-            # Now we can transition to backward
-            self.state.transition_target = None
-            backward_range = init_pwm - self.config.min_pwm
-            return init_pwm - int(throttle * backward_range)
-        else:
-            # Must return to init_pwm first
-            self.state.transition_target = MotorState.BACKWARD
-            return init_pwm
-
-    def _calculate_pwm_for_state(self, state: MotorState, throttle: float, brake: float) -> int:
-        """Calculate PWM value for a given motor state."""
-        init_pwm = self.config.init_pwm
-
-        if state == MotorState.STOPPED:
-            return init_pwm
-        elif state == MotorState.FORWARD:
-            forward_range = self.config.max_pwm - init_pwm
-            return init_pwm + int(throttle * forward_range)
-        elif state == MotorState.BACKWARD:
-            backward_range = init_pwm - self.config.min_pwm
-            return init_pwm - int(throttle * backward_range)
-        elif state == MotorState.BRAKE_LOCKED:
-            # Apply braking with reduced PWM range for safety
-            backward_range = init_pwm - self.config.min_pwm
-            brake_pwm = init_pwm - int(brake * backward_range * 0.6)  # Limit brake intensity
-            return max(self.config.min_pwm, brake_pwm)
-        else:
-            # Default to stopped
-            return init_pwm
-
-    def _update_motor_state(self, pwm_value: int, desired_state: MotorState):
-        """Update motor state tracking."""
-        # Clamp PWM to valid range
-        pwm_value = max(self.config.min_pwm, min(pwm_value, self.config.max_pwm))
-
-        # Update state
-        self.state.last_pwm_value = pwm_value
-
-        # Update motor state if not transitioning
-        if self.state.transition_target is None:
-            self.state.motor_state = desired_state
-
     def reset_controllers(self) -> None:
         """
-        Reset all PID controllers and motor state to their initial state.
+        Reset PID controller and motor state to their initial state.
         """
         self.speed_controller.reset()
-        self.accel_controller.reset()
 
         # Reset state variables
-        self.state.speed_control_accel_target = 0.0
-        self.state.accel_control_pedal_target = 0.0
-        self.state.last_acceleration = 0.0
+        self.state.speed_control_pwm_offset = 0.0
         self.state.in_reverse = False
 
         # Reset motor state machine
@@ -877,16 +664,11 @@ class AutoSdvActuator(Node):
         self.state.last_pwm_value = self.config.init_pwm
         self.state.transition_target = None
 
-    def publish_debug_control_values(
-        self, throttle: float, brake: float, in_reverse: bool
-    ):
+    def publish_debug_control_values(self):
         """
         Publish debug information about control values.
-
-        Args:
-            throttle: Current throttle value (0-1)
-            brake: Current brake value (0-1)
-            in_reverse: Current gear state
+        
+        Publishes PWM offset and direction information.
         """
         msg = Float32MultiArrayStamped()
 
@@ -896,11 +678,14 @@ class AutoSdvActuator(Node):
         # Create descriptive layout
         msg.layout.dim.append(MultiArrayDimension())
         msg.layout.dim[0].label = "control_values"
-        msg.layout.dim[0].size = 3
-        msg.layout.dim[0].stride = 3
+        msg.layout.dim[0].size = 2
+        msg.layout.dim[0].stride = 2
 
-        # Add data: [throttle, brake, in_reverse]
-        msg.data = [throttle, brake, 1.0 if in_reverse else 0.0]
+        # Add data: [pwm_offset, in_reverse]
+        msg.data = [
+            self.state.speed_control_pwm_offset,
+            1.0 if self.state.in_reverse else 0.0
+        ]
 
         # Publish message
         self.debug_control_publisher.publish(msg)
@@ -933,6 +718,8 @@ class AutoSdvActuator(Node):
     def publish_debug_pid_values(self):
         """
         Publish debug information about PID controller values.
+        
+        Publishes speed PID values and PWM offset.
         """
         msg = Float32MultiArrayStamped()
 
@@ -942,12 +729,12 @@ class AutoSdvActuator(Node):
         # Create descriptive layout
         msg.layout.dim.append(MultiArrayDimension())
         msg.layout.dim[0].label = "pid_values"
-        msg.layout.dim[0].size = 11
-        msg.layout.dim[0].stride = 11
+        msg.layout.dim[0].size = 8
+        msg.layout.dim[0].stride = 8
 
         # Add data with the following format:
         # [target_speed, current_speed, target_tire_angle, current_tire_angle,
-        #  speed_p, speed_i, speed_d, accel_p, accel_i, accel_d, accel_target]
+        #  speed_p, speed_i, speed_d, pwm_offset]
         target_speed = (
             self.state.target_speed if self.state.target_speed is not None else 0.0
         )
@@ -973,10 +760,7 @@ class AutoSdvActuator(Node):
             self.speed_controller.proportional,
             self.speed_controller.integral,
             self.speed_controller.derivative,
-            self.accel_controller.proportional,
-            self.accel_controller.integral,
-            self.accel_controller.derivative,
-            self.state.speed_control_accel_target,
+            self.state.speed_control_pwm_offset,
         ]
 
         # Publish message
@@ -994,11 +778,8 @@ class State:
         target_tire_angle: Target steering tire angle from control commands
         current_tire_angle: Current measured tire angle (if available)
 
-        speed_control_accel_target: Target acceleration from speed controller
-        accel_control_pedal_target: Target pedal position from acceleration controller
-        current_acceleration: Current measured acceleration
-        last_speed: Previous measured speed
-        last_acceleration: Previous measured acceleration
+        speed_control_pwm_offset: PWM offset from speed PID controller
+        last_speed: Previous measured speed (for velocity estimation)
         in_reverse: Whether vehicle is in reverse gear
         last_update_time: Timestamp of last update
 
@@ -1015,12 +796,9 @@ class State:
     target_tire_angle: Optional[float]
     current_tire_angle: Optional[float]
 
-    # Ackermann-specific state variables
-    speed_control_accel_target: float
-    accel_control_pedal_target: float
-    current_acceleration: float
+    # Control state variables
+    speed_control_pwm_offset: float
     last_speed: float
-    last_acceleration: float
     in_reverse: bool
     last_update_time: float
 
@@ -1044,8 +822,6 @@ class Config:
         init_steer: Initial steering PWM value (straight)
         max_steer: Maximum steering PWM value (right turn)
         tire_angle_to_steer_ratio: Conversion ratio from tire angle to steering PWM
-        max_accel: Maximum allowed acceleration [m/s²]
-        max_decel: Maximum allowed deceleration [m/s²]
         steering_speed: Maximum steering speed [rad/s]
         max_steering_angle: Maximum steering angle [rad]
     """
@@ -1061,8 +837,6 @@ class Config:
     tire_angle_to_steer_ratio: float
 
     # Ackermann-specific parameters
-    max_accel: float
-    max_decel: float
     steering_speed: float
     max_steering_angle: float
 
