@@ -84,10 +84,14 @@ class AckermannPID:
         self.proportional = 0.0
         self.integral = 0.0
         self.derivative = 0.0
+        self.derivative_filtered = 0.0  # Filtered derivative for smoother control
         self.is_saturated = False  # Track saturation state for conditional integration
 
         self.last_error = 0.0
         self.last_input = 0.0
+
+        # Derivative filtering parameter (EMA)
+        self.derivative_filter_alpha = 0.15  # Lower = more filtering (heavy filtering for stability)
 
     def set_target_point(self, point: float) -> None:
         """
@@ -127,7 +131,13 @@ class AckermannPID:
         # Derivative on measurement (not error) to reduce derivative kick
         # Negate to provide damping: when measurement increases rapidly, reduce output
         if delta_time > 0:
-            self.derivative = -(self.kd * (input_value - self.last_input)) / delta_time
+            raw_derivative = -(self.kd * (input_value - self.last_input)) / delta_time
+            # Apply low-pass filter to derivative to reduce noise sensitivity
+            self.derivative_filtered = (
+                self.derivative_filter_alpha * raw_derivative +
+                (1.0 - self.derivative_filter_alpha) * self.derivative_filtered
+            )
+            self.derivative = self.derivative_filtered
         else:
             self.derivative = 0.0
 
@@ -423,6 +433,9 @@ class AutoSdvActuator(Node):
         self.vel_meas_alpha = params["velocity_measurement_filter_alpha"]
         self.vel_cmd_alpha = params["velocity_command_filter_alpha"]
 
+        # PWM output filtering for smoother control (0 = heavy filtering, 1 = no filtering)
+        self.pwm_output_alpha = 0.25  # Heavy filtering to eliminate PWM oscillations
+
     def initialize_state(self):
         """
         Initialize the controller state.
@@ -694,12 +707,24 @@ class AutoSdvActuator(Node):
         # Calculate final PWM value based on direction
         if self.state.in_reverse:
             # Reverse: subtract offset from init_pwm
-            pwm_value = int(self.config.init_pwm - pwm_offset)
+            raw_pwm_value = self.config.init_pwm - pwm_offset
         else:
             # Forward: add offset to init_pwm
-            pwm_value = int(self.config.init_pwm + pwm_offset)
+            raw_pwm_value = self.config.init_pwm + pwm_offset
 
-        # Clamp to valid PWM range
+        # Apply PWM output filtering to smooth rapid changes
+        if self.state.filtered_pwm_output == 0.0:
+            # Initialize on first call
+            self.state.filtered_pwm_output = raw_pwm_value
+        else:
+            # EMA filter: smooths PWM transitions
+            self.state.filtered_pwm_output = (
+                self.pwm_output_alpha * raw_pwm_value +
+                (1.0 - self.pwm_output_alpha) * self.state.filtered_pwm_output
+            )
+
+        # Convert to integer and clamp to valid PWM range
+        pwm_value = int(self.state.filtered_pwm_output)
         pwm_value = max(self.config.min_pwm, min(self.config.max_pwm, pwm_value))
 
         # Store for next iteration
@@ -942,9 +967,10 @@ class State:
     transition_target: Optional[MotorState]
     brake_threshold: int
 
-    # Filtered velocities for PID control (with defaults)
+    # Filtered values for PID control (with defaults - must be at end)
     filtered_measured_velocity: float = 0.0
     filtered_target_velocity: float = 0.0
+    filtered_pwm_output: float = 0.0  # Smoothed PWM output
 
 
 @dataclass
