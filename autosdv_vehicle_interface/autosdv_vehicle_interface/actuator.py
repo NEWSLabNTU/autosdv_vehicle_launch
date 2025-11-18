@@ -125,8 +125,9 @@ class AckermannPID:
         self.integral = max(-self.integral_limit, min(self.integral, self.integral_limit))
 
         # Derivative on measurement (not error) to reduce derivative kick
+        # Negate to provide damping: when measurement increases rapidly, reduce output
         if delta_time > 0:
-            self.derivative = (self.kd * (input_value - self.last_input)) / delta_time
+            self.derivative = -(self.kd * (input_value - self.last_input)) / delta_time
         else:
             self.derivative = 0.0
 
