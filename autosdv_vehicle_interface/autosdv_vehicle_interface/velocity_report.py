@@ -68,34 +68,37 @@ class AutoSdvVelocityReportNode(Node):
         self.pin = pin
         self.publisher = publisher
         self.timer = timer
-        self.count = 0  # Counter for wheel markers detected
-        self.prev_time = clock.now()  # Time of last measurement
+
+        # Velocity measurement using edge-to-edge timing (smoother than counting)
+        self.distance_per_marker = wheel_circumference_meters / self.markers_per_rotation
+        self.last_edge_time = None  # Time of last marker edge
+        self.current_velocity = 0.0  # Current velocity estimate (m/s)
+        self.velocity_alpha = 0.3  # EMA filter alpha for velocity smoothing
+        self.timeout_threshold = 0.5  # If no markers for 0.5s, assume stopped
+
         self.clock = clock
 
     def publish_callback(self) -> None:
         """
-        Timer callback that calculates and publishes the vehicle velocity.
+        Timer callback that publishes the current vehicle velocity estimate.
 
-        Computes speed based on wheel rotation markers detected since last call.
+        Publishes the velocity calculated from edge-to-edge timing.
+        Resets velocity to zero if no markers detected recently (timeout).
         """
-        # Compute the elapsed time since the last measurement
         curr_time = self.clock.now()
-        elapsed_secs = (curr_time - self.prev_time).nanoseconds / (10**9)
 
-        # Compute the speed based on marker count and elapsed time
-        markers_per_sec = self.count / elapsed_secs
-        rotations_per_sec = markers_per_sec / self.markers_per_rotation
-        speed = rotations_per_sec * self.wheel_circumference_meters
-
-        # Reset state variables for next measurement
-        self.count = 0
-        self.prev_time = curr_time
+        # Check for timeout (vehicle stopped if no markers detected recently)
+        if self.last_edge_time is not None:
+            time_since_last_edge = (curr_time - self.last_edge_time).nanoseconds / (10**9)
+            if time_since_last_edge > self.timeout_threshold:
+                # No markers for timeout period - vehicle is stopped
+                self.current_velocity = 0.0
 
         # Create and publish the velocity report message
         msg = VelocityReport()
         msg.header.stamp = curr_time.to_msg()
         msg.header.frame_id = self.frame_id
-        msg.longitudinal_velocity = speed  # Forward/backward velocity
+        msg.longitudinal_velocity = self.current_velocity  # Forward/backward velocity
         msg.lateral_velocity = 0.0  # Side-to-side velocity (always 0 for this vehicle)
         msg.heading_rate = 0.0  # Rate of heading change (not measured here)
         self.publisher.publish(msg)
@@ -104,13 +107,36 @@ class AutoSdvVelocityReportNode(Node):
         """
         GPIO event callback that is triggered when a wheel marker is detected.
 
-        Increments the marker count for speed calculation.
+        Uses edge-to-edge timing to calculate instantaneous velocity.
+        This provides much smoother velocity estimates than counting markers.
 
         Args:
             channel: GPIO channel that triggered the event
         """
-        # Increment the marker count for each detected rising edge
-        self.count += 1
+        current_time = self.clock.now()
+
+        if self.last_edge_time is not None:
+            # Calculate time since last marker
+            dt = (current_time - self.last_edge_time).nanoseconds / (10**9)
+
+            # Prevent division by zero for very fast edges
+            if dt > 0.001:  # Minimum 1ms between edges (max ~27 m/s for our wheel)
+                # Calculate instantaneous velocity from this edge
+                instantaneous_velocity = self.distance_per_marker / dt
+
+                # Apply exponential moving average filter for smoothing
+                if self.current_velocity == 0.0:
+                    # Initialize on first measurement
+                    self.current_velocity = instantaneous_velocity
+                else:
+                    # EMA: new = alpha * measured + (1-alpha) * previous
+                    self.current_velocity = (
+                        self.velocity_alpha * instantaneous_velocity +
+                        (1.0 - self.velocity_alpha) * self.current_velocity
+                    )
+
+        # Update last edge time
+        self.last_edge_time = current_time
 
 
 def main():
