@@ -44,23 +44,24 @@
     #   - Increase kp for more responsive acceleration
     #   - Add ki to eliminate steady-state speed error
     #   - Increase kd to reduce oscillation and overshoot
-    kp_speed: 2.5
-    ki_speed: 0.6
-    kd_speed: 0.3
+    # Keep Kp high for fast response, reduce Ki/Kd for steady-state stability
+    kp_speed: 3.0
+    ki_speed: 5.0
+    kd_speed: 0.1
 
     # Anti-windup configuration
-    integral_limit: 30.0                    # Maximum integral accumulation (PWM units)
+    integral_limit: 50.0                    # Maximum integral accumulation (PWM units)
     enable_conditional_integration: true    # Stop integrating when PWM saturated
 
     # Deadbands and thresholds
-    velocity_deadband: 0.15                 # m/s - small deadband to reduce jitter
-    full_stop_threshold: 0.2                # m/s - threshold for considering vehicle stopped
+    velocity_deadband: 0.0
+    full_stop_threshold: 0.1                # m/s - threshold for considering vehicle stopped
 
     # Velocity filtering (exponential moving average)
     # Alpha values: 0 = heavy filtering, 1 = no filtering
     # Moderate filtering to balance responsiveness with noise rejection
-    velocity_measurement_filter_alpha: 0.5  # Moderate filtering to smooth oscillations
-    velocity_command_filter_alpha: 0.9      # Fast response to target speed changes
+    velocity_measurement_filter_alpha: 0.9
+    velocity_command_filter_alpha: 0.9
 
     ## Ackermann control - steering
     # Maximum steering angle [rad]
