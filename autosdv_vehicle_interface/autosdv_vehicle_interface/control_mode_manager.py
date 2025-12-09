@@ -15,6 +15,7 @@ from autoware_vehicle_msgs.msg import ControlModeReport
 from autoware_vehicle_msgs.srv import ControlModeCommand
 from autoware_control_msgs.msg import Control
 from std_msgs.msg import Bool
+from tier4_system_msgs.msg import OperationModeAvailability
 
 
 class ControlModeManager(Node):
@@ -66,6 +67,13 @@ class ControlModeManager(Node):
         self.engage_status_pub = self.create_publisher(
             Bool,
             '/vehicle/engage',
+            1
+        )
+
+        # Operation mode availability publisher - required by Autoware's operation_mode_transition_manager
+        self.operation_mode_availability_pub = self.create_publisher(
+            OperationModeAvailability,
+            '/system/operation_mode/availability',
             1
         )
         
@@ -307,6 +315,29 @@ class ControlModeManager(Node):
         engage_msg = Bool()
         engage_msg.data = (self.current_mode == ControlModeReport.AUTONOMOUS)
         self.engage_status_pub.publish(engage_msg)
+
+        # Publish operation mode availability - tells Autoware which modes are available
+        availability_msg = OperationModeAvailability()
+        availability_msg.stamp = self.get_clock().now().to_msg()
+        # When startup is complete, all modes are available
+        if self.startup_complete and not self.emergency_stop_active:
+            availability_msg.stop = True
+            availability_msg.autonomous = True
+            availability_msg.local = True
+            availability_msg.remote = True
+            availability_msg.emergency_stop = True
+            availability_msg.comfortable_stop = True
+            availability_msg.pull_over = True
+        else:
+            # During startup or emergency, only emergency stop is available
+            availability_msg.stop = True
+            availability_msg.autonomous = False
+            availability_msg.local = False
+            availability_msg.remote = False
+            availability_msg.emergency_stop = True
+            availability_msg.comfortable_stop = False
+            availability_msg.pull_over = False
+        self.operation_mode_availability_pub.publish(availability_msg)
 
 
 def main(args=None):
