@@ -45,9 +45,9 @@
     #   - Add ki to eliminate steady-state speed error
     #   - Increase kd to reduce oscillation and overshoot
     # Keep Kp high for fast response, reduce Ki/Kd for steady-state stability
-    kp_speed: 3.0
-    ki_speed: 5.0
-    kd_speed: 0.1
+    kp_speed: 10.0
+    ki_speed: 12.0
+    kd_speed: 0.01
 
     # Anti-windup configuration
     integral_limit: 50.0                    # Maximum integral accumulation (PWM units)
