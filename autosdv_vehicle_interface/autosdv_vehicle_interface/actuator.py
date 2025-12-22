@@ -260,6 +260,11 @@ class AutoSdvActuator(Node):
 
         self.declare_parameter("tire_angle_to_steer_ratio", Parameter.Type.DOUBLE)
 
+
+        # Ackermann geometry parameters
+        self.declare_parameter("wheelbase", Parameter.Type.DOUBLE)  # L in diagram
+        self.declare_parameter("track_width", Parameter.Type.DOUBLE)  # Distance between left/right wheels
+
     def get_all_parameter_values(self):
         """
         Get all parameter values.
@@ -378,7 +383,6 @@ class AutoSdvActuator(Node):
             .get_parameter_value()
             .double_value
         )
-
         return params
 
     def create_config(self, params):
@@ -628,10 +632,18 @@ class AutoSdvActuator(Node):
             self.publish_debug_control_values()
             self.publish_debug_pwm_values(pwm_value, steer_value)
             self.publish_debug_pid_values()
-
+    # Replace run_steering_control with Ackermann implementation:
     def run_steering_control(self, delta_time: float) -> int:
         """
         Implements the steering control logic using the Ackermann model.
+
+        The Ackermann model calculates inner and outer wheel angles:
+        - Inner angle: atan(L / (R - track/2))
+        - Outer angle: atan(L / (R + track/2))
+
+        Where L = wheelbase, R = turning radius
+
+        For simplicity with single steering servo, we use the average angle.
 
         Args:
             delta_time: Time since last update in seconds
@@ -643,31 +655,81 @@ class AutoSdvActuator(Node):
         if self.state.target_tire_angle is None:
             return self.config.init_steer
 
-        # Instant steering
-        target_angle = self.state.target_tire_angle
-        steer_angle = target_angle
+        # Clamp the commanded angle to limits
+        commanded_angle = max(
+            -self.config.max_steering_angle,
+            min(self.state.target_tire_angle, self.config.max_steering_angle)
+        )
+
+        # Low-pass filter the commanded angle (from diagram)
+        if not hasattr(self.state, 'filtered_commanded_angle'):
+            self.state.filtered_commanded_angle = commanded_angle
+        else:
+            # EMA filter with alpha = 0.3 (from diagram)
+            alpha = 0.3
+            self.state.filtered_commanded_angle = (
+                alpha * commanded_angle +
+                (1.0 - alpha) * self.state.filtered_commanded_angle
+            )
+
+        clamped_angle = self.state.filtered_commanded_angle
+
+        # Apply Ackermann geometry model
+        if abs(clamped_angle) < 0.001:  # Near zero - straight ahead
+            inner_angle = 0.0
+            outer_angle = 0.0
+        else:
+            # Calculate turning radius from steering angle
+            # R = L / tan(delta) where delta is the steering angle
+            turning_radius = self.config.wheelbase / math.tan(abs(clamped_angle))
+
+            # Calculate inner and outer wheel angles using Ackermann formula
+            # Inner wheel (sharper turn)
+            inner_radius = turning_radius - (self.config.track_width / 2.0)
+            inner_angle = math.atan(self.config.wheelbase / inner_radius)
+
+            # Outer wheel (gentler turn)
+            outer_radius = turning_radius + (self.config.track_width / 2.0)
+            outer_angle = math.atan(self.config.wheelbase / outer_radius)
+
+            # Preserve sign from commanded angle
+            if clamped_angle < 0:
+                inner_angle = -inner_angle
+                outer_angle = -outer_angle
+
+        # For a single servo, use the average of inner and outer angles
+        # (In a real Ackermann system, you'd have separate servos)
+        average_angle = (inner_angle + outer_angle) / 2.0
+
+        # Store for debugging
+        self.state.current_tire_angle = average_angle
 
         # Convert the steering angle to PWM value
-        steer = steer_angle * self.config.tire_angle_to_steer_ratio
+        steer = average_angle * self.config.tire_angle_to_steer_ratio
         steer_pwm = self.config.init_steer + int(steer)
 
-        # Limit steering PWM value to min/max range
+        # Clamp PWM to limits
         steer_pwm = max(self.config.min_steer, min(self.config.max_steer, steer_pwm))
 
         return steer_pwm
 
+    # Update run_longitudinal_control to match diagram's PID flow:
     def run_longitudinal_control(self, delta_time: float) -> int:
         """
-        Implements the longitudinal control logic using direct PWM output.
+        Implements longitudinal control with low-pass filtering as shown in diagram.
 
-        Uses a single PID controller that maps speed error directly to PWM offset,
-        which is then added to the init_pwm value to get the final PWM output.
+        Flow:
+        1. Low-pass filter on measured velocity (EMA α=0.3)
+        2. Calculate error (target - measured)
+        3. PID controller
+        4. Anti-windup integral limit
+        5. PWM correction and clamping
 
         Args:
             delta_time: Time since last update in seconds
 
         Returns:
-            int: PWM value for motor (clamped to min_pwm/max_pwm range)
+            int: PWM value for motor
         """
         # Return init PWM if we don't have necessary state information
         if self.state.target_speed is None or self.state.current_speed is None:
@@ -676,61 +738,55 @@ class AutoSdvActuator(Node):
         # Check if we need to apply brake when coming to a stop
         if (abs(self.state.target_speed) < self.full_stop_threshold and
             abs(self.state.current_speed) > self.brake_threshold):
-            # Target is near zero but vehicle is moving - apply brake
-            self.get_logger().debug(f"Applying brake: target={self.state.target_speed:.2f}, current={self.state.current_speed:.2f}")
+            self.get_logger().debug(f"Applying brake")
             return self.config.brake_pwm
 
         # Check for full stop condition
         if self.run_control_full_stop():
             return self.config.init_pwm
 
-        # Use filtered velocities for control
-        target_velocity = self.state.filtered_target_velocity
-        current_velocity = self.state.filtered_measured_velocity
-
-        # Apply velocity deadband - ignore small errors to prevent jitter
-        velocity_error = abs(target_velocity - current_velocity)
-        if velocity_error < self.velocity_deadband:
-            # Within deadband - maintain current PWM to avoid jitter
-            return self.state.last_pwm_value
-
-        # Handle reverse control logic
-        self.run_control_reverse()
-
-        # Run speed PID controller to get PWM offset using filtered velocities
-        self.speed_controller.set_target_point(target_velocity)
-        pwm_offset = self.speed_controller.run(current_velocity, delta_time)
-
-        # Store pwm_offset for debug publishing
-        self.state.speed_control_pwm_offset = pwm_offset
-
-        # Calculate final PWM value based on direction
-        if self.state.in_reverse:
-            # Reverse: subtract offset from init_pwm
-            raw_pwm_value = self.config.init_pwm - pwm_offset
+        # Low-pass filter on measured velocity (from diagram: EMA α=0.3)
+        raw_measured = self.state.current_speed
+        if not hasattr(self.state, 'filtered_yaw_rate'):
+            self.state.filtered_yaw_rate = raw_measured
         else:
-            # Forward: add offset to init_pwm
-            raw_pwm_value = self.config.init_pwm + pwm_offset
-
-        # Apply PWM output filtering to smooth rapid changes
-        if self.state.filtered_pwm_output == 0.0:
-            # Initialize on first call
-            self.state.filtered_pwm_output = raw_pwm_value
-        else:
-            # EMA filter: smooths PWM transitions
-            self.state.filtered_pwm_output = (
-                self.pwm_output_alpha * raw_pwm_value +
-                (1.0 - self.pwm_output_alpha) * self.state.filtered_pwm_output
+            alpha_measured = 0.3  # From diagram
+            self.state.filtered_yaw_rate = (
+                alpha_measured * raw_measured +
+                (1.0 - alpha_measured) * self.state.filtered_yaw_rate
             )
 
-        # Convert to integer and clamp to valid PWM range
-        pwm_value = int(self.state.filtered_pwm_output)
-        pwm_value = max(self.config.min_pwm, min(self.config.max_pwm, pwm_value))
+        # Use target speed directly (diagram shows no filter on target)
+        target_velocity = self.state.target_speed
+        measured_velocity = self.state.filtered_yaw_rate
+
+        # Calculate error
+        yaw_rate_error = target_velocity - measured_velocity
+
+        # Apply velocity deadband
+        if abs(yaw_rate_error) < self.velocity_deadband:
+            return self.state.last_pwm_value
+
+        # Handle reverse logic
+        self.run_control_reverse()
+
+        # PID controller
+        self.speed_controller.set_target_point(target_velocity)
+        pwm_correction = self.speed_controller.run(measured_velocity, delta_time)
+
+        # Store for debug
+        self.state.speed_control_pwm_offset = pwm_correction
+
+        # Combine: pwm = init + correction
+        raw_pwm = self.config.init_pwm + int(pwm_correction)
+
+        # Clamp to min/max PWM
+        clamped_pwm = max(self.config.min_pwm, min(self.config.max_pwm, raw_pwm))
 
         # Store for next iteration
-        self.state.last_pwm_value = pwm_value
+        self.state.last_pwm_value = clamped_pwm
 
-        return pwm_value
+        return clamped_pwm
 
     def run_control_full_stop(self) -> bool:
         """
@@ -872,7 +928,7 @@ class AutoSdvActuator(Node):
     def publish_debug_pid_values(self):
         """
         Publish debug information about PID controller values.
-        
+
         Publishes speed PID values and PWM offset.
         """
         msg = Float32MultiArrayStamped()
@@ -1005,6 +1061,11 @@ class Config:
     # Ackermann-specific parameters
     steering_speed: float
     max_steering_angle: float
+
+
+    # Ackermann geometry
+    wheelbase: float = 0.340  # L
+    track_width: float = 0.24  # Distance between wheels
 
 
 def main():
