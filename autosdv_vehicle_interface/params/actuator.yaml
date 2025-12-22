@@ -16,13 +16,13 @@
 
     ## PWM parameters (calibrated 2025-11-18)
     # The initial PWM value when the vehicle stops.
-    init_pwm: 390
+    init_pwm: 370
     # The minimum PWM value when the vehicle drives backward at max speed.
     # Note: Vehicle starts moving backward at 385, brake position is 340
     min_pwm: 360
     # The maximum PWM value when the vehicle drives forward at max speed.
     # Note: Vehicle starts moving forward at 395
-    max_pwm: 420
+    max_pwm: 470
 
     # Brake sequence PWM value (used for forward-to-backward transition)
     brake_pwm: 340
@@ -45,9 +45,9 @@
     #   - Add ki to eliminate steady-state speed error
     #   - Increase kd to reduce oscillation and overshoot
     # Keep Kp high for fast response, reduce Ki/Kd for steady-state stability
-    kp_speed: 10.0
-    ki_speed: 12.0
-    kd_speed: 0.01
+    kp_speed: 12.0
+    ki_speed: 10.0
+    kd_speed: 0.001
 
     # Anti-windup configuration
     integral_limit: 50.0                    # Maximum integral accumulation (PWM units)
@@ -71,15 +71,15 @@
     steering_speed: 1.0
 
     # The initial value for the steering servo that makes the vehicle go straight.
-    init_steer: 400
+    init_steer: 489
     # The minimum control value for steering servo (RIGHT turn - reversed hardware).
-    min_steer: 350
+    min_steer: 439
     # The maximum control value for steering servo (LEFT turn - reversed hardware).
-    max_steer: 450
+    max_steer: 539
 
     # Note: Steering direction is REVERSED in hardware
     # Lower PWM (350) = RIGHT turn, Higher PWM (450) = LEFT turn
 
     # The ratio between the tire angle and the steer value
     # Positive value to compensate for reversed steering hardware
-    tire_angle_to_steer_ratio: 2000.0
+    tire_angle_to_steer_ratio: -1000.0
