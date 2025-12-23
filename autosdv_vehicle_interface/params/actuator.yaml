@@ -83,3 +83,17 @@
     # The ratio between the tire angle and the steer value
     # Positive value to compensate for reversed steering hardware
     tire_angle_to_steer_ratio: -1000.0
+
+    ## Vehicle geometry (Ackermann model)
+    # Wheelbase - distance between front and rear axles [m]
+    wheelbase: 0.340
+    # Track width - distance between left and right wheels [m]
+    track_width: 0.24
+
+    ## Output filtering
+    # Derivative filter alpha (0 = heavy filtering, 1 = no filtering)
+    # Lower values reduce noise sensitivity in PID derivative term
+    derivative_filter_alpha: 0.15
+    # PWM output filter alpha (0 = heavy filtering, 1 = no filtering)
+    # Smooths PWM output to reduce motor oscillations
+    pwm_output_alpha: 0.25

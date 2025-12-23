@@ -2,20 +2,11 @@
   ros__parameters:
     # Publishing rate in Hz
     publish_rate: 30.0
-    
-    # PWM configuration (should match actuator.yaml)
-    init_steer: 307      # PWM value for straight
-    min_steer: 204       # PWM value for max left
-    max_steer: 409       # PWM value for max right
-    
-    # Conversion ratio from tire angle to PWM units
-    tire_angle_to_steer_ratio: 130.0
-    
-    # Maximum steering angle in radians (20 degrees)
-    max_steering_angle: 0.349
-    
-    # Frame ID for status messages
-    frame_id: "base_link"
-    
-    # Estimated steering response time in seconds
-    steering_response_time: 0.2
+
+    # Steering response time in seconds
+    # Used for smoothing to simulate servo response
+    # Lower value = faster response, higher value = more smoothing
+    steering_response_time: 0.1
+
+    # NOTE: max_steering_angle is loaded from actuator.yaml via launch file.
+    # actuator.yaml is the single source of truth for steering configuration.

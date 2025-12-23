@@ -35,25 +35,43 @@ class GearManager(Node):
 
     def __init__(self):
         super().__init__('gear_manager_node')
-        
-        # Declare parameters
+
+        # Declare gear_manager-specific parameters
         self.declare_parameter('publish_rate', 30.0)
         self.declare_parameter('velocity_threshold', 0.1)  # m/s to consider stopped
         self.declare_parameter('frame_id', 'base_link')
         self.declare_parameter('enable_gear_commands', True)
-        
+
+        # Motor PWM parameters from actuator.yaml (single source of truth)
+        # No defaults - these MUST be loaded from actuator.yaml via launch file
+        self.declare_parameter('init_pwm')   # PWM value when motor is stopped
+        self.declare_parameter('min_pwm')    # PWM value for max reverse
+        self.declare_parameter('max_pwm')    # PWM value for max forward
+        self.declare_parameter('brake_pwm')  # PWM value for braking
+
         # Get parameters
         self.publish_rate = self.get_parameter('publish_rate').value
         self.velocity_threshold = self.get_parameter('velocity_threshold').value
         self.frame_id = self.get_parameter('frame_id').value
         self.enable_commands = self.get_parameter('enable_gear_commands').value
-        
+
+        # Motor parameters from actuator.yaml
+        self.init_pwm = self.get_parameter('init_pwm').value
+        self.min_pwm = self.get_parameter('min_pwm').value
+        self.max_pwm = self.get_parameter('max_pwm').value
+        self.brake_pwm = self.get_parameter('brake_pwm').value
+
+        self.get_logger().info(
+            f'Motor params from actuator.yaml: init_pwm={self.init_pwm}, '
+            f'min_pwm={self.min_pwm}, max_pwm={self.max_pwm}, brake_pwm={self.brake_pwm}'
+        )
+
         # State tracking
         self.current_gear = GearReport.PARK
         self.requested_gear = GearReport.PARK
         self.current_velocity = 0.0
         self.motor_state = MotorState.STOPPED
-        self.last_pwm_value = 307  # Default init_pwm
+        self.last_pwm_value = self.init_pwm  # Use configured init_pwm
         
         # Publishers
         self.gear_status_pub = self.create_publisher(
@@ -113,24 +131,26 @@ class GearManager(Node):
         """
         Determine motor state from PWM and velocity.
         This mirrors the logic in actuator.py for consistency.
+        Uses PWM thresholds from actuator.yaml.
         """
-        init_pwm = 307  # Standard init_pwm value
-        brake_threshold = 20  # PWM units below init for brake detection
-        
+        # PWM deadzone around init_pwm (neutral zone)
+        pwm_deadzone = 5
+
         # Determine state based on PWM and velocity
         if abs(self.current_velocity) < self.velocity_threshold:
             # Vehicle is stopped or nearly stopped
-            if abs(self.last_pwm_value - init_pwm) < 5:
+            if abs(self.last_pwm_value - self.init_pwm) < pwm_deadzone:
                 self.motor_state = MotorState.STOPPED
-            elif self.last_pwm_value < (init_pwm - brake_threshold):
+            elif self.last_pwm_value <= self.brake_pwm:
+                # At or below brake PWM = braking
                 self.motor_state = MotorState.BRAKE_LOCKED
             else:
                 self.motor_state = MotorState.STOPPED
         else:
             # Vehicle is moving
-            if self.last_pwm_value > init_pwm + 5:
+            if self.last_pwm_value > self.init_pwm + pwm_deadzone:
                 self.motor_state = MotorState.FORWARD
-            elif self.last_pwm_value < init_pwm - 5:
+            elif self.last_pwm_value < self.init_pwm - pwm_deadzone:
                 # Could be braking or reverse
                 if self.current_velocity > self.velocity_threshold:
                     # Moving forward but PWM is reverse = braking

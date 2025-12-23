@@ -193,11 +193,8 @@ class AutoSdvActuator(Node):
         # Initialize PID controllers
         self.initialize_pid_controllers(parameter_values)
 
-        # Initialize controller state
-        self.state = self.initialize_state()
-
-        # Set initial PWM value from config
-        self.state.last_pwm_value = parameter_values["init_pwm"]
+        # Initialize controller state with config values
+        self.state = self.initialize_state(parameter_values)
 
         # Initialize hardware
         self.driver = self.initialize_pwm_driver(parameter_values)
@@ -264,6 +261,10 @@ class AutoSdvActuator(Node):
         # Ackermann geometry parameters
         self.declare_parameter("wheelbase", Parameter.Type.DOUBLE)  # L in diagram
         self.declare_parameter("track_width", Parameter.Type.DOUBLE)  # Distance between left/right wheels
+
+        # Output filtering parameters
+        self.declare_parameter("derivative_filter_alpha", Parameter.Type.DOUBLE)
+        self.declare_parameter("pwm_output_alpha", Parameter.Type.DOUBLE)
 
     def get_all_parameter_values(self):
         """
@@ -383,6 +384,23 @@ class AutoSdvActuator(Node):
             .get_parameter_value()
             .double_value
         )
+
+        # Vehicle geometry parameters
+        params["wheelbase"] = (
+            self.get_parameter("wheelbase").get_parameter_value().double_value
+        )
+        params["track_width"] = (
+            self.get_parameter("track_width").get_parameter_value().double_value
+        )
+
+        # Output filtering parameters
+        params["derivative_filter_alpha"] = (
+            self.get_parameter("derivative_filter_alpha").get_parameter_value().double_value
+        )
+        params["pwm_output_alpha"] = (
+            self.get_parameter("pwm_output_alpha").get_parameter_value().double_value
+        )
+
         return params
 
     def create_config(self, params):
@@ -406,6 +424,8 @@ class AutoSdvActuator(Node):
             tire_angle_to_steer_ratio=params["tire_angle_to_steer_ratio"],
             steering_speed=params["steering_speed"],
             max_steering_angle=params["max_steering_angle"],
+            wheelbase=params["wheelbase"],
+            track_width=params["track_width"],
         )
 
     def initialize_pid_controllers(self, params):
@@ -437,12 +457,18 @@ class AutoSdvActuator(Node):
         self.vel_meas_alpha = params["velocity_measurement_filter_alpha"]
         self.vel_cmd_alpha = params["velocity_command_filter_alpha"]
 
-        # PWM output filtering for smoother control (0 = heavy filtering, 1 = no filtering)
-        self.pwm_output_alpha = 0.25  # Heavy filtering to eliminate PWM oscillations
+        # PWM output filtering for smoother control (from actuator.yaml)
+        self.pwm_output_alpha = params["pwm_output_alpha"]
 
-    def initialize_state(self):
+        # Update PID derivative filter alpha from config
+        self.speed_controller.derivative_filter_alpha = params["derivative_filter_alpha"]
+
+    def initialize_state(self, params):
         """
         Initialize the controller state.
+
+        Args:
+            params: Dictionary with parameter values from actuator.yaml
 
         Returns:
             State: State object
@@ -459,9 +485,8 @@ class AutoSdvActuator(Node):
             last_update_time=time.time(),
             # Motor state machine
             motor_state=MotorState.STOPPED,
-            last_pwm_value=307,  # Will be set from config
+            last_pwm_value=params["init_pwm"],  # From actuator.yaml
             transition_target=None,
-            brake_threshold=20,  # Default threshold
         )
 
     def initialize_pwm_driver(self, params):
@@ -998,11 +1023,9 @@ class State:
         in_reverse: Whether vehicle is in reverse gear
         last_update_time: Timestamp of last update
 
-        # Motor state machine variables
         motor_state: Current motor state (STOPPED, FORWARD, etc.)
-        last_pwm_value: Previous PWM value sent to motor
+        last_pwm_value: Previous PWM value sent to motor (from actuator.yaml init_pwm)
         transition_target: Target state during transitions
-        brake_threshold: PWM threshold below init_pwm for brake locking
     """
 
     target_speed: Optional[float]
@@ -1021,7 +1044,6 @@ class State:
     motor_state: MotorState
     last_pwm_value: int
     transition_target: Optional[MotorState]
-    brake_threshold: int
 
     # Filtered values for PID control (with defaults - must be at end)
     filtered_measured_velocity: float = 0.0
@@ -1033,6 +1055,7 @@ class State:
 class Config:
     """
     Dataclass to hold the configuration parameters.
+    All values are loaded from actuator.yaml (single source of truth).
 
     Attributes:
         min_pwm: Minimum PWM value for backward movement
@@ -1045,6 +1068,8 @@ class Config:
         tire_angle_to_steer_ratio: Conversion ratio from tire angle to steering PWM
         steering_speed: Maximum steering speed [rad/s]
         max_steering_angle: Maximum steering angle [rad]
+        wheelbase: Distance between front and rear axles [m]
+        track_width: Distance between left and right wheels [m]
     """
 
     min_pwm: int
@@ -1062,10 +1087,9 @@ class Config:
     steering_speed: float
     max_steering_angle: float
 
-
-    # Ackermann geometry
-    wheelbase: float = 0.340  # L
-    track_width: float = 0.24  # Distance between wheels
+    # Ackermann geometry (from actuator.yaml)
+    wheelbase: float
+    track_width: float
 
 
 def main():
