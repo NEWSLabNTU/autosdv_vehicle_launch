@@ -8,5 +8,5 @@
     # Lower value = faster response, higher value = more smoothing
     steering_response_time: 0.1
 
-    # NOTE: max_steering_angle is loaded from actuator.yaml via launch file.
-    # actuator.yaml is the single source of truth for steering configuration.
+    # NOTE: max_steer_angle is loaded from vehicle_info.param.yaml via the
+    # launch file -- the same limit the planner uses.

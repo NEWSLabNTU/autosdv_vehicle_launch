@@ -5,6 +5,8 @@
   <arg name="is_simulation" default="false" description="Enable simulation mode (disables PWM output)"/>
   <arg name="launch_vehicle_interface" default="true"/>
   <arg name="actuator_log_level" default="info" description="Log level for actuator node (debug/info/warn/error/fatal)"/>
+  <arg name="vehicle_info_param_file" default="$(find-pkg-share autosdv_vehicle_description)/config/vehicle_info.param.yaml"
+       description="Vehicle geometry (wheel_base, wheel_tread, max_steer_angle); the file the planner uses"/>
 
   <!-- Vehicle Interface -->
   <group if="$(var launch_vehicle_interface)">
@@ -14,6 +16,7 @@
     <node pkg="autosdv_vehicle_interface" exec="actuator" name="actuator_node" output="screen"
           args="--ros-args --log-level $(var actuator_log_level)">
       <param from="$(find-pkg-share autosdv_vehicle_interface)/params/actuator.yaml"/>
+      <param from="$(var vehicle_info_param_file)"/>
       <!-- Override dry_run parameter based on is_simulation flag -->
       <param name="dry_run" value="$(var is_simulation)"/>
       <remap from="~/input/control_cmd" to="/control/command/control_cmd"/>
@@ -40,9 +43,9 @@
     </node>
 
     <!-- Steering Status -->
-    <!-- Uses actuator.yaml as single source of truth for max_steering_angle -->
+    <!-- max_steer_angle comes from vehicle_info, the planner's own limit -->
     <node pkg="autosdv_vehicle_interface" exec="steering_status" name="steering_status_node" output="screen">
-      <param from="$(find-pkg-share autosdv_vehicle_interface)/params/actuator.yaml"/>
+      <param from="$(var vehicle_info_param_file)"/>
       <param from="$(find-pkg-share autosdv_vehicle_interface)/params/steering_status.yaml"/>
     </node>
 

@@ -64,8 +64,12 @@
     velocity_command_filter_alpha: 0.9
 
     ## Ackermann control - steering
-    # Maximum steering angle [rad]
-    max_steering_angle: 0.5
+    # The steering limit, wheelbase and track are NOT set here. They come from
+    # autosdv_vehicle_description/config/vehicle_info.param.yaml
+    # (max_steer_angle, wheel_base, wheel_tread), which the launch file loads
+    # into this node. That is the file the planner sizes every trajectory
+    # against; a second copy here drifted (0.340 m vs 0.319 m wheelbase,
+    # 0.5 rad vs 0.349 rad steering limit) without anything noticing.
 
     # Maximum steering speed [rad/s]
     steering_speed: 1.0
@@ -83,12 +87,6 @@
     # The ratio between the tire angle and the steer value
     # Positive value to compensate for reversed steering hardware
     tire_angle_to_steer_ratio: -1000.0
-
-    ## Vehicle geometry (Ackermann model)
-    # Wheelbase - distance between front and rear axles [m]
-    wheelbase: 0.340
-    # Track width - distance between left and right wheels [m]
-    track_width: 0.24
 
     ## Output filtering
     # Derivative filter alpha (0 = heavy filtering, 1 = no filtering)

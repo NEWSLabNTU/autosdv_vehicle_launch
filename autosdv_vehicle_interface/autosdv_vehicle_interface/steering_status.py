@@ -34,12 +34,12 @@ class SteeringStatus(Node):
         self.declare_parameter('publish_rate', 30.0)
         self.declare_parameter('steering_response_time', 0.1)  # seconds for smoothing
 
-        # From actuator.yaml (single source of truth) - no default
-        self.declare_parameter('max_steering_angle')  # rad
+        # From vehicle_info.param.yaml, the planner's own limit - no default
+        self.declare_parameter('max_steer_angle')  # rad
 
         # Get parameters
         self.publish_rate = self.get_parameter('publish_rate').value
-        self.max_steering_angle = self.get_parameter('max_steering_angle').value
+        self.max_steering_angle = self.get_parameter('max_steer_angle').value
         self.response_time = self.get_parameter('steering_response_time').value
 
         # State tracking
@@ -77,7 +77,7 @@ class SteeringStatus(Node):
         )
         self.get_logger().info(
             f'max_steering_angle={self.max_steering_angle:.3f} rad '
-            f'({math.degrees(self.max_steering_angle):.1f}°) from actuator.yaml'
+            f'({math.degrees(self.max_steering_angle):.1f}°) from vehicle_info.param.yaml'
         )
         self.get_logger().info(
             f'Reporting commanded steering angle directly (no sensor feedback)'

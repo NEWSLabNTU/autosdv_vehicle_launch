@@ -253,14 +253,16 @@ class AutoSdvActuator(Node):
         self.declare_parameter("min_steer", Parameter.Type.INTEGER)
         self.declare_parameter("init_steer", Parameter.Type.INTEGER)
         self.declare_parameter("max_steer", Parameter.Type.INTEGER)
-        self.declare_parameter("max_steering_angle", Parameter.Type.DOUBLE)
+        # Vehicle geometry comes from vehicle_info.param.yaml, under Autoware's
+        # names, so the planner and this node cannot disagree about the car.
+        self.declare_parameter("max_steer_angle", Parameter.Type.DOUBLE)
 
         self.declare_parameter("tire_angle_to_steer_ratio", Parameter.Type.DOUBLE)
 
 
-        # Ackermann geometry parameters
-        self.declare_parameter("wheelbase", Parameter.Type.DOUBLE)  # L in diagram
-        self.declare_parameter("track_width", Parameter.Type.DOUBLE)  # Distance between left/right wheels
+        # Ackermann geometry parameters, also from vehicle_info.param.yaml
+        self.declare_parameter("wheel_base", Parameter.Type.DOUBLE)  # L in diagram
+        self.declare_parameter("wheel_tread", Parameter.Type.DOUBLE)  # Distance between left/right wheels
 
         # Output filtering parameters
         self.declare_parameter("derivative_filter_alpha", Parameter.Type.DOUBLE)
@@ -341,7 +343,7 @@ class AutoSdvActuator(Node):
             self.get_parameter("steering_speed").get_parameter_value().double_value
         )
         params["max_steering_angle"] = (
-            self.get_parameter("max_steering_angle").get_parameter_value().double_value
+            self.get_parameter("max_steer_angle").get_parameter_value().double_value
         )
 
         # PID controller parameters - speed
@@ -387,10 +389,10 @@ class AutoSdvActuator(Node):
 
         # Vehicle geometry parameters
         params["wheelbase"] = (
-            self.get_parameter("wheelbase").get_parameter_value().double_value
+            self.get_parameter("wheel_base").get_parameter_value().double_value
         )
         params["track_width"] = (
-            self.get_parameter("track_width").get_parameter_value().double_value
+            self.get_parameter("wheel_tread").get_parameter_value().double_value
         )
 
         # Output filtering parameters
