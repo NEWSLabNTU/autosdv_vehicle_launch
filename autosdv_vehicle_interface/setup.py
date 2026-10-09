@@ -31,6 +31,7 @@ setup(
             "control_mode_manager = autosdv_vehicle_interface.control_mode_manager:main",
             "steering_status = autosdv_vehicle_interface.steering_status:main",
             "signal_manager = autosdv_vehicle_interface.signal_manager:main",
+            "speed_bench = autosdv_vehicle_interface.speed_bench:main",
         ],
     },
 )
