@@ -135,6 +135,15 @@ class SpeedPID:
         """Return the motor PWM count. The actuator clamps and overrides it."""
 ```
 
+These three are launch arguments of `vehicle_interface.launch.xml`, which
+holds their defaults; `actuator.yaml` does not set them:
+
+```bash
+ros2 launch autosdv_vehicle_launch vehicle_interface.launch.xml \
+  speed_controller_class:=my_pkg.speed_pid:SpeedPID \
+  'speed_controller_params:={kp: 20.0, ki: 4.0}' speed_controller_dt_source:=loop
+```
+
 - `speed_controller_class` -- `"pkg.module:Class"`. The default,
   `autosdv_vehicle_interface.speed_controller:AckermannSpeedPID`, is the PID
   this node has always run; `test/test_speed_controller_equivalence.py` checks
@@ -145,7 +154,7 @@ class SpeedPID:
   cannot hold a dictionary), merged over the motor parameters the controller
   always receives: `init_pwm`, `min_pwm`, `max_pwm`, `brake_pwm`, `rate`, and
   the `kp_speed` ... `derivative_filter_alpha` PID settings. Example:
-  `speed_controller_params: "{kp: 20.0, ki: 4.0}"`.
+  `speed_controller_params:="{kp: 20.0, ki: 4.0}"`.
 - `measured_speed` is the velocity report after the shell's EMA (alpha 0.3).
   The hall sensor has no direction, so it is never negative on the vehicle.
 - `dt` depends on `speed_controller_dt_source`. `"velocity_report"` (default,

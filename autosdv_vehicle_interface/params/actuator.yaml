@@ -56,17 +56,10 @@
     neutral_write_timeout: 0.5
 
     ## Speed controller plug-in (target speed -> motor PWM)
-    # Import path "pkg.module:Class" of a class with __init__(params: dict),
-    # reset() and update(target_speed, measured_speed, dt) -> int PWM.
-    # The default is the PID configured below, unchanged.
-    speed_controller_class: "autosdv_vehicle_interface.speed_controller:AckermannSpeedPID"
-    # The plug-in's own parameters, as a YAML mapping in a string, merged over
-    # this file's motor parameters, e.g. "{kp: 20.0, ki: 4.0}".
-    speed_controller_params: ""
-    # dt handed to the controller: "velocity_report" = time since the last
-    # velocity report (legacy; with 20 Hz reports and a 100 Hz loop it makes
-    # the effective integral gain ~3x ki_speed), or "loop" = the loop period.
-    speed_controller_dt_source: "velocity_report"
+    # speed_controller_class, speed_controller_params and
+    # speed_controller_dt_source are launch arguments of
+    # autosdv_vehicle_launch/launch/vehicle_interface.launch.xml, which is
+    # where their defaults live; this file does not set them.
     # After an exception (or a non-numeric output) from the plug-in: motor to
     # neutral for this long, then reset() and retry. [s]
     controller_fault_holdoff: 1.0

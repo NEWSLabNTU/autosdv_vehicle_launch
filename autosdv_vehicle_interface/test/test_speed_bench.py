@@ -14,6 +14,7 @@
 """Motor plant model and the speed bench harness."""
 import json
 import os
+import xml.etree.ElementTree as ET
 
 from autosdv_vehicle_interface.motor_plant import HallSpeedSensor, MotorPlant, MotorPlantParams
 from autosdv_vehicle_interface.speed_bench import (
@@ -27,6 +28,9 @@ import pytest
 import yaml
 
 ACTUATOR_YAML = os.path.join(os.path.dirname(__file__), "..", "params", "actuator.yaml")
+VEHICLE_INTERFACE_LAUNCH = os.path.join(
+    os.path.dirname(__file__), "..", "..", "autosdv_vehicle_launch", "launch",
+    "vehicle_interface.launch.xml")
 
 
 def settle(plant, pwm, seconds=10.0, dt=0.001):
@@ -91,6 +95,10 @@ def test_hall_sensor_reads_constant_speed():
 def test_actuator_defaults_match_params_file():
     with open(ACTUATOR_YAML) as f:
         params = yaml.safe_load(f)["/**"]["ros__parameters"]
+    # The speed_controller_* defaults live in the launch file, not actuator.yaml.
+    launch = ET.parse(VEHICLE_INTERFACE_LAUNCH).getroot()
+    params |= {a.get("name"): a.get("default") for a in launch.iter("arg")
+               if a.get("name", "").startswith("speed_controller_")}
     for key, value in DEFAULT_ACTUATOR_PARAMS.items():
         assert params[key] == value, key
 

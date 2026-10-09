@@ -7,6 +7,14 @@
   <arg name="actuator_log_level" default="info" description="Log level for actuator node (debug/info/warn/error/fatal)"/>
   <arg name="vehicle_info_param_file" default="$(find-pkg-share autosdv_vehicle_description)/config/vehicle_info.param.yaml"
        description="Vehicle geometry (wheel_base, wheel_tread, max_steer_angle); the file the planner uses"/>
+  <!-- Speed controller plug-in. These are the only place these defaults live;
+       actuator.yaml does not set them. -->
+  <arg name="speed_controller_class" default="autosdv_vehicle_interface.speed_controller:AckermannSpeedPID"
+       description="Inner loop, package.module:Class with reset() and update(target_speed, measured_speed, dt) -> PWM"/>
+  <arg name="speed_controller_params" default=""
+       description="The plug-in's own parameters as a YAML mapping string, e.g. {kp: 20.0, ki: 4.0}"/>
+  <arg name="speed_controller_dt_source" default="velocity_report"
+       description="dt handed to the plug-in: velocity_report (legacy; time since the last 20 Hz report, so ~3x effective ki at the 100 Hz loop) or loop (the loop period)"/>
 
   <!-- Vehicle Interface -->
   <group if="$(var launch_vehicle_interface)">
@@ -19,6 +27,9 @@
       <param from="$(var vehicle_info_param_file)"/>
       <!-- Override dry_run parameter based on is_simulation flag -->
       <param name="dry_run" value="$(var is_simulation)"/>
+      <param name="speed_controller_class" value="$(var speed_controller_class)"/>
+      <param name="speed_controller_params" value="$(var speed_controller_params)" type="str"/>
+      <param name="speed_controller_dt_source" value="$(var speed_controller_dt_source)"/>
       <remap from="~/input/control_cmd" to="/control/command/control_cmd"/>
       <remap from="~/input/velocity_status" to="/vehicle/status/velocity_status"/>
       <!-- Emergency inputs: vehicle_cmd_gate's verdict and the MRM handler's state -->
