@@ -70,6 +70,121 @@ The controller operates in four modes:
 - **Deadband Hold**: Maintain current PWM when velocity error is within deadband (prevents jitter)
 - **Active Control**: PID-based speed control with forward/reverse direction mapping
 
+Mode selection lives in `longitudinal.py` (`LongitudinalShell`, no ROS
+dependency); the PID behind Active Control is a plug-in (see
+[Speed Controller Plug-in](#speed-controller-plug-in)). The current mode is
+published on `~/debug/mode` when it changes, with the override reason appended
+(`override_brake:command_timeout`).
+
+### Safety Overrides
+
+Above the four modes sit overrides that stop the motor whatever the command
+says. They are checked first on every tick, and no speed controller can bypass
+them:
+
+| Override | Trigger | Default |
+|---|---|---|
+| `command_timeout` | no **usable** `~/input/control_cmd` for `control_cmd_timeout` | 0.3 s |
+| `velocity_timeout` | no `~/input/velocity_status` for `velocity_timeout` | 0.5 s |
+| `emergency` | `~/input/emergency` (`tier4_vehicle_msgs/VehicleEmergencyStamped`, the gate's `/control/command/emergency_cmd`) says emergency, or `~/input/mrm_state` (`autoware_adapi_v1_msgs/MrmState`, `/system/fail_safe/mrm_state`) is an MRM that requires a stop | on |
+| `controller_fault` | the speed controller raised, or returned something that is not a finite number | -- |
+
+Every override does the same thing: **brake, then neutral**. `brake_pwm` is
+applied while the vehicle is moving faster than `brake_threshold` -- judged by
+the current speed, else the last reading seen, else by whether the motor was
+being driven forward -- for at most `override_brake_duration` (1.5 s), then
+`init_pwm`. A vehicle that is already stopped goes straight to neutral, because
+holding `brake_pwm` on a stopped car can make the ESC reverse. During a
+`command_timeout` the steering is centred (`init_steer`); otherwise it keeps
+following the commands. Each episode is logged once when it starts and once
+when it clears; on clearing, the speed controller is `reset()` and control
+resumes on the next tick.
+
+A command is **usable** when its velocity and steering angle are finite and
+its header stamp is within `control_cmd_max_stamp_age` (0.5 s) of the node's
+clock. Unusable commands are dropped -- they do not feed the watchdog -- and
+the reason is logged once per run of identical rejections. Unstamped commands
+(stamp zero) are accepted. A stamp more than 10 s off is reported as a
+`use_sim_time` mismatch between publisher and actuator; set
+`control_cmd_max_stamp_age: 0.0` to disable the stamp check.
+
+An MRM requires a stop when it has failed, or is operating/succeeded with the
+emergency-stop behaviour (the gate's own rule) -- or, with
+`emergency_stop_on_any_mrm: true` (the default), for any behaviour. The default
+is deliberately strict: a comfortable stop acts through the planning velocity
+limit, which a planner that bypasses Autoware planning (the Lab 2 pursuit
+planner) ignores.
+
+**On exit** -- normal shutdown, SIGINT, SIGTERM, or an exception out of the
+executor -- the node cancels its timer and writes `init_pwm` to the motor and
+`init_steer` to the steering (also registered with `atexit`). The write runs on
+a daemon thread bounded by `neutral_write_timeout` (0.5 s), so a hung I2C bus
+cannot keep the process alive. SIGKILL, a kernel panic or a power cut cannot be
+handled in software: the PCA9685 then holds its last duty cycle, which is what
+the hardware kill switch is for.
+
+### Speed Controller Plug-in
+
+Active Control calls a speed controller selected by import path:
+
+```python
+class SpeedPID:
+    def __init__(self, params: dict): ...
+    def reset(self) -> None: ...
+    def update(self, target_speed: float, measured_speed: float, dt: float) -> int:
+        """Return the motor PWM count. The actuator clamps and overrides it."""
+```
+
+- `speed_controller_class` -- `"pkg.module:Class"`. The default,
+  `autosdv_vehicle_interface.speed_controller:AckermannSpeedPID`, is the PID
+  this node has always run; `test/test_speed_controller_equivalence.py` checks
+  it against a frozen copy of the pre-plug-in code, tick for tick. The node
+  refuses to start if the class cannot be loaded, rather than drive with a
+  controller nobody selected.
+- `speed_controller_params` -- a YAML mapping in a string (ROS parameters
+  cannot hold a dictionary), merged over the motor parameters the controller
+  always receives: `init_pwm`, `min_pwm`, `max_pwm`, `brake_pwm`, `rate`, and
+  the `kp_speed` ... `derivative_filter_alpha` PID settings. Example:
+  `speed_controller_params: "{kp: 20.0, ki: 4.0}"`.
+- `measured_speed` is the velocity report after the shell's EMA (alpha 0.3).
+  The hall sensor has no direction, so it is never negative on the vehicle.
+- `dt` depends on `speed_controller_dt_source`. `"velocity_report"` (default,
+  the legacy behaviour) is the time since the last velocity report, which with
+  20 Hz reports and a 100 Hz loop runs 0.01 ... 0.05 s and makes the effective
+  integral gain about 3x `ki_speed`. `"loop"` is the loop period. Tune on the
+  bench with the same setting the vehicle uses.
+- The output is clamped to `[min_pwm, max_pwm]`. Note that the default PID
+  limits its own offset to `+-(max_pwm - min_pwm) // 2`, so with the shipped
+  values it never commands more than 425.
+- `update()` is called only in Active Control; `reset()` after every override
+  episode. An exception from either, or a non-finite/non-numeric return, sends
+  the motor to neutral (braking first if moving) with a traceback in the log;
+  after `controller_fault_holdoff` (1 s) the controller is reset and retried,
+  and after `controller_max_faults` (3) faults it stays disabled until the node
+  restarts. The node itself never crashes on a controller error.
+
+### Offline Bench (motor plant model)
+
+`motor_plant.py` models the drive train (first-order response toward a speed
+linear in PWM beyond a deadband around `init_pwm`, braking below it, coasting
+inside it) and the `velocity_report` node (edge timing on 12 wheel markers,
+EMA, 20 Hz, 0.5 s zero timeout, unsigned). `speed_bench.py` runs a speed
+controller against it through the same `LongitudinalShell` the vehicle uses
+and reports rise time, overshoot, steady-state error and settling time:
+
+```bash
+ros2 run autosdv_vehicle_interface speed_bench
+ros2 run autosdv_vehicle_interface speed_bench \
+    --controller my_pkg.speed_pid:SpeedPID --params '{kp: 20.0}' \
+    --target 1.0 --duration 8 --csv tmp/step.csv
+```
+
+**The plant parameters are provisional** (`MotorPlantParams`: deadband 5
+counts, 0.03 m/s per count, time constant 0.4 s, coast 1.5 s, brake 3 m/s²).
+They are consistent with `actuator.yaml` but not fitted; fit them from bags of
+`~/debug/pwm_values` against `/vehicle/status/velocity_status` before the bench
+is used to judge gains.
+
 ### Active Control Mode Details
 
 ```mermaid
@@ -322,7 +437,18 @@ Control parameters are configured in `params/actuator.yaml`:
 - `brake_threshold`: Threshold for emergency brake activation
 - `velocity_measurement_filter_alpha`: Low-pass filter coefficient for measured velocity
 - `velocity_command_filter_alpha`: Low-pass filter coefficient for target velocity
-- PWM values: `min_pwm` (280), `init_pwm` (370), `max_pwm` (460), `brake_pwm` (340)
+- PWM values: `min_pwm` (360), `init_pwm` (370), `max_pwm` (470), `brake_pwm` (340)
+
+### Safety and Plug-in Parameters
+- `control_cmd_timeout` (0.3 s): command watchdog
+- `control_cmd_max_stamp_age` (0.5 s): reject commands stamped further than this from now; 0 disables
+- `velocity_timeout` (0.5 s): velocity-report watchdog; 0 disables
+- `override_brake_duration` (1.5 s): longest brake at the start of an override
+- `enable_emergency_input` (true): subscribe to the gate's emergency output and the MRM state
+- `emergency_stop_on_any_mrm` (true): stop on any MRM, not only emergency-stop ones
+- `neutral_write_timeout` (0.5 s): bound on the neutral write at exit
+- `speed_controller_class`, `speed_controller_params`, `speed_controller_dt_source`
+- `controller_fault_holdoff` (1.0 s), `controller_max_faults` (3)
 
 ### Lateral Control Parameters
 - `kp_steer`, `ki_steer`, `kd_steer`: PID gains for yaw rate control
@@ -347,9 +473,26 @@ Control parameters are configured in `params/actuator.yaml`:
 ### Subscriptions
 - `~/input/control_cmd` (`autoware_control_msgs/msg/Control`): Control commands from Autoware
 - `~/input/velocity_status` (`autoware_vehicle_msgs/msg/VelocityReport`): Current vehicle velocity
-- `~/input/imu` (`sensor_msgs/msg/Imu`): IMU data for yaw rate feedback
+- `~/input/emergency` (`tier4_vehicle_msgs/msg/VehicleEmergencyStamped`): vehicle_cmd_gate's emergency output, remapped to `/control/command/emergency_cmd`
+- `~/input/mrm_state` (`autoware_adapi_v1_msgs/msg/MrmState`): MRM state, remapped to `/system/fail_safe/mrm_state`
 
 ### Publications
 - `~/debug/control_values` (`autoware_internal_debug_msgs/msg/Float32MultiArrayStamped`): Debug control values
 - `~/debug/pwm_values` (`autoware_internal_debug_msgs/msg/Float32MultiArrayStamped`): Debug PWM outputs
-- `~/debug/pid_values` (`autoware_internal_debug_msgs/msg/Float32MultiArrayStamped`): Debug PID state
+- `~/debug/pid_values` (`autoware_internal_debug_msgs/msg/Float32MultiArrayStamped`): Debug PID state (P, I, D are zero for a plug-in without `debug_terms()`)
+- `~/debug/mode` (`std_msgs/msg/String`, transient local): longitudinal mode on change, e.g. `active`, `brake`, `override_neutral:emergency`
+
+## Tests
+
+All tests run without hardware: the PCA9685 is replaced by a fake, and GPIO is
+never imported.
+
+```bash
+colcon build --base-paths src --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release \
+    --packages-select autosdv_vehicle_interface
+colcon test --base-paths src --packages-select autosdv_vehicle_interface
+colcon test-result --verbose --test-result-base build/autosdv_vehicle_interface
+```
+
+`test_actuator_node.py` needs rclpy and the Autoware message packages and
+starts real processes; run it with a private `ROS_DOMAIN_ID`.
