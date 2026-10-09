@@ -30,6 +30,49 @@
     # Brake threshold - minimum speed to trigger active braking when target is zero
     brake_threshold: 0.2  # m/s - threshold for considering significant motion
 
+    ## Safety (always overrides the speed controller)
+    # No usable /control/command/control_cmd for this long -> brake, then neutral;
+    # steering centred. Recovers on the next usable command. [s]
+    control_cmd_timeout: 0.3
+    # Commands whose header stamp is further than this from the node clock are
+    # dropped (they do not feed the watchdog). Unstamped (zero) commands pass.
+    # A stamp more than 10 s off is reported as a use_sim_time mismatch.
+    # 0 disables the check. [s]
+    control_cmd_max_stamp_age: 0.5
+    # No velocity report for this long -> brake, then neutral (0 disables). [s]
+    velocity_timeout: 0.5
+    # Longest brake_pwm at the start of an override; neutral afterwards, and at
+    # once when the vehicle is already below brake_threshold. [s]
+    override_brake_duration: 1.5
+    # Brake to a stop on vehicle_cmd_gate's emergency output
+    # (~/input/emergency) and on an MRM (~/input/mrm_state).
+    enable_emergency_input: true
+    # true: stop on ANY operating/succeeded MRM, comfortable stop included.
+    # Needed whenever the planner ignores the velocity limit a comfortable stop
+    # acts through (the Lab 2 pursuit planner does). false: only on an
+    # emergency-stop MRM or a failed MRM, as vehicle_cmd_gate does.
+    emergency_stop_on_any_mrm: true
+    # Upper bound on the neutral write at shutdown, if the I2C bus hangs. [s]
+    neutral_write_timeout: 0.5
+
+    ## Speed controller plug-in (target speed -> motor PWM)
+    # Import path "pkg.module:Class" of a class with __init__(params: dict),
+    # reset() and update(target_speed, measured_speed, dt) -> int PWM.
+    # The default is the PID configured below, unchanged.
+    speed_controller_class: "autosdv_vehicle_interface.speed_controller:AckermannSpeedPID"
+    # The plug-in's own parameters, as a YAML mapping in a string, merged over
+    # this file's motor parameters, e.g. "{kp: 20.0, ki: 4.0}".
+    speed_controller_params: ""
+    # dt handed to the controller: "velocity_report" = time since the last
+    # velocity report (legacy; with 20 Hz reports and a 100 Hz loop it makes
+    # the effective integral gain ~3x ki_speed), or "loop" = the loop period.
+    speed_controller_dt_source: "velocity_report"
+    # After an exception (or a non-numeric output) from the plug-in: motor to
+    # neutral for this long, then reset() and retry. [s]
+    controller_fault_holdoff: 1.0
+    # Faults after which the plug-in stays disabled until restart (0 = never).
+    controller_max_faults: 3
+
     ## Ackermann control - longitudinal
     # PID controller parameters for speed control (outputs PWM offset directly)
     # Output range: -50 to +50 (for PWM range 390±50 = 340-440)

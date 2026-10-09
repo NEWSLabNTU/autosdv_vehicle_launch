@@ -21,6 +21,9 @@
       <param name="dry_run" value="$(var is_simulation)"/>
       <remap from="~/input/control_cmd" to="/control/command/control_cmd"/>
       <remap from="~/input/velocity_status" to="/vehicle/status/velocity_status"/>
+      <!-- Emergency inputs: vehicle_cmd_gate's verdict and the MRM handler's state -->
+      <remap from="~/input/emergency" to="/control/command/emergency_cmd"/>
+      <remap from="~/input/mrm_state" to="/system/fail_safe/mrm_state"/>
     </node>
 
     <node pkg="autosdv_vehicle_interface" exec="velocity_report" name="velocity_report_node" output="screen">
