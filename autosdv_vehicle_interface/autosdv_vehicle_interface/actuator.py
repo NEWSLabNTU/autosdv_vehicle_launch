@@ -174,7 +174,7 @@ class AutoSdvActuator(Node):
         self.declare_parameter("velocity_timeout", 0.5)
         self.declare_parameter("override_brake_duration", 1.5)
         self.declare_parameter("enable_emergency_input", True)
-        self.declare_parameter("emergency_stop_on_any_mrm", True)
+        self.declare_parameter("emergency_stop_on_any_mrm", False)
         self.declare_parameter("neutral_write_timeout", 0.5)
 
     def get_all_parameter_values(self):

@@ -110,10 +110,11 @@ the reason is logged once per run of identical rejections. Unstamped commands
 
 An MRM requires a stop when it has failed, or is operating/succeeded with the
 emergency-stop behaviour (the gate's own rule) -- or, with
-`emergency_stop_on_any_mrm: true` (the default), for any behaviour. The default
-is deliberately strict: a comfortable stop acts through the planning velocity
-limit, which a planner that bypasses Autoware planning (the Lab 2 pursuit
-planner) ignores.
+`emergency_stop_on_any_mrm:=true`, for any behaviour. It is a launch argument
+of `vehicle_interface.launch.xml` and defaults to false, which leaves a
+comfortable stop to the planner as stock Autoware does. Turn it on for a
+planner that bypasses Autoware planning and so ignores the velocity limit a
+comfortable stop acts through; the Lab 2 launch does.
 
 **On exit** -- normal shutdown, SIGINT, SIGTERM, or an exception out of the
 executor -- the node cancels its timer and writes `init_pwm` to the motor and
@@ -454,7 +455,7 @@ Control parameters are configured in `params/actuator.yaml`:
 - `velocity_timeout` (0.5 s): velocity-report watchdog; 0 disables
 - `override_brake_duration` (1.5 s): longest brake at the start of an override
 - `enable_emergency_input` (true): subscribe to the gate's emergency output and the MRM state
-- `emergency_stop_on_any_mrm` (true): stop on any MRM, not only emergency-stop ones
+- `emergency_stop_on_any_mrm` (false, launch argument): stop on any MRM, not only emergency-stop ones
 - `neutral_write_timeout` (0.5 s): bound on the neutral write at exit
 - `speed_controller_class`, `speed_controller_params`, `speed_controller_dt_source`
 - `controller_fault_holdoff` (1.0 s), `controller_max_faults` (3)

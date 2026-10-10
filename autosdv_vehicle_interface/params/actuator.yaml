@@ -47,11 +47,9 @@
     # Brake to a stop on vehicle_cmd_gate's emergency output
     # (~/input/emergency) and on an MRM (~/input/mrm_state).
     enable_emergency_input: true
-    # true: stop on ANY operating/succeeded MRM, comfortable stop included.
-    # Needed whenever the planner ignores the velocity limit a comfortable stop
-    # acts through (the Lab 2 pursuit planner does). false: only on an
-    # emergency-stop MRM or a failed MRM, as vehicle_cmd_gate does.
-    emergency_stop_on_any_mrm: true
+    # emergency_stop_on_any_mrm is a launch argument of
+    # autosdv_vehicle_launch/launch/vehicle_interface.launch.xml (default
+    # false); this file does not set it.
     # Upper bound on the neutral write at shutdown, if the I2C bus hangs. [s]
     neutral_write_timeout: 0.5
 

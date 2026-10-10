@@ -178,17 +178,10 @@ def test_gate_emergency_brakes(make_node):
     assert tick(node)[0] > INIT_PWM
 
 
-def test_mrm_comfortable_stop_brakes_by_default(make_node):
+def test_mrm_comfortable_stop_passes_by_default(make_node):
+    # Default off: a comfortable stop is left to the planner, as stock Autoware
+    # does; an emergency-stop MRM still brakes (the gate's own rule).
     node = make_node()
-    velocity(node, 1.0)
-    control(node, 1.0)
-    node.mrm_state_callback(MrmState(state=MrmState.MRM_OPERATING,
-                                     behavior=MrmState.COMFORTABLE_STOP))
-    assert tick(node)[0] == BRAKE_PWM
-
-
-def test_mrm_comfortable_stop_passes_when_configured(make_node):
-    node = make_node(emergency_stop_on_any_mrm=False)
     velocity(node, 0.15)
     control(node, 1.0)
     node.mrm_state_callback(MrmState(state=MrmState.MRM_OPERATING,
@@ -197,6 +190,17 @@ def test_mrm_comfortable_stop_passes_when_configured(make_node):
     node.mrm_state_callback(MrmState(state=MrmState.MRM_OPERATING,
                                      behavior=MrmState.EMERGENCY_STOP))
     velocity(node, 1.0)
+    assert tick(node)[0] == BRAKE_PWM
+
+
+def test_mrm_comfortable_stop_brakes_when_configured(make_node):
+    # What the Lab 2 launch turns on: its planner ignores the velocity limit a
+    # comfortable stop acts through.
+    node = make_node(emergency_stop_on_any_mrm=True)
+    velocity(node, 1.0)
+    control(node, 1.0)
+    node.mrm_state_callback(MrmState(state=MrmState.MRM_OPERATING,
+                                     behavior=MrmState.COMFORTABLE_STOP))
     assert tick(node)[0] == BRAKE_PWM
 
 
