@@ -35,6 +35,12 @@ class ControlModeManager(Node):
         self.declare_parameter('startup_delay', 3.0)  # seconds
         self.declare_parameter('frame_id', 'base_link')
         self.declare_parameter('default_to_autonomous', False)
+        # /system/operation_mode/availability is also what Autoware's
+        # diagnostic graph converter publishes. With both running, the MRM
+        # handler and the ADAPI engage check read whichever arrived last, so
+        # this node's unconditional "autonomous available" can hide a failed
+        # graph check. A stack that runs the graph should turn this off.
+        self.declare_parameter('publish_operation_mode_availability', True)
         
         # Get parameters
         self.publish_rate = self.get_parameter('publish_rate').value
@@ -42,6 +48,8 @@ class ControlModeManager(Node):
         self.startup_delay = self.get_parameter('startup_delay').value
         self.frame_id = self.get_parameter('frame_id').value
         self.default_autonomous = self.get_parameter('default_to_autonomous').value
+        self.publish_availability = self.get_parameter(
+            'publish_operation_mode_availability').value
         
         # State tracking
         self.current_mode = ControlModeReport.NOT_READY
@@ -70,12 +78,14 @@ class ControlModeManager(Node):
             1
         )
 
-        # Operation mode availability publisher - required by Autoware's operation_mode_transition_manager
-        self.operation_mode_availability_pub = self.create_publisher(
-            OperationModeAvailability,
-            '/system/operation_mode/availability',
-            1
-        )
+        # Operation mode availability publisher (see publish_operation_mode_availability)
+        self.operation_mode_availability_pub = None
+        if self.publish_availability:
+            self.operation_mode_availability_pub = self.create_publisher(
+                OperationModeAvailability,
+                '/system/operation_mode/availability',
+                1
+            )
         
         # Subscribers
         self.control_cmd_sub = self.create_subscription(
@@ -317,6 +327,8 @@ class ControlModeManager(Node):
         self.engage_status_pub.publish(engage_msg)
 
         # Publish operation mode availability - tells Autoware which modes are available
+        if self.operation_mode_availability_pub is None:
+            return
         availability_msg = OperationModeAvailability()
         availability_msg.stamp = self.get_clock().now().to_msg()
         # When startup is complete, all modes are available
