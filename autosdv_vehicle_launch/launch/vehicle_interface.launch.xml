@@ -15,6 +15,8 @@
        description="The plug-in's own parameters as a YAML mapping string, e.g. {kp: 20.0, ki: 4.0}"/>
   <arg name="emergency_stop_on_any_mrm" default="false"
        description="true: brake on ANY operating/succeeded MRM, comfortable stop included. Needed when the planner ignores the velocity limit a comfortable stop acts through (the Lab 2 pursuit planner). false: only on an emergency-stop or failed MRM, as vehicle_cmd_gate does"/>
+  <arg name="launch_velocity_report" default="true"
+       description="the hall-sensor wheel speed node (needs Jetson.GPIO). false when something else publishes /vehicle/status/velocity_status, such as the Lab 2 vehicle bench's plant model"/>
   <arg name="launch_signal_manager" default="true"
        description="turn indicator and hazard light status; nothing reads it in a stack without Autoware planning or the AD API vehicle adapters"/>
   <arg name="publish_operation_mode_availability" default="true"
@@ -44,7 +46,7 @@
       <remap from="~/input/mrm_state" to="/system/fail_safe/mrm_state"/>
     </node>
 
-    <node pkg="autosdv_vehicle_interface" exec="velocity_report" name="velocity_report_node" output="screen">
+    <node pkg="autosdv_vehicle_interface" exec="velocity_report" name="velocity_report_node" output="screen" if="$(var launch_velocity_report)">
       <param from="$(find-pkg-share autosdv_vehicle_interface)/params/velocity_report.yaml"/>
       <remap from="~/output/velocity_status" to="/vehicle/status/velocity_status"/>
     </node>
