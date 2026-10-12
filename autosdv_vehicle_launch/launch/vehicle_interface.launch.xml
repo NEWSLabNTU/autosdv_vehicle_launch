@@ -19,8 +19,8 @@
        description="the hall-sensor wheel speed node (needs Jetson.GPIO). false when something else publishes /vehicle/status/velocity_status, such as the Lab 2 vehicle bench's plant model"/>
   <arg name="launch_signal_manager" default="true"
        description="turn indicator and hazard light status; nothing reads it in a stack without Autoware planning or the AD API vehicle adapters"/>
-  <arg name="publish_operation_mode_availability" default="true"
-       description="control_mode_manager also publishes /system/operation_mode/availability (always 'autonomous available'). false when the diagnostic graph converter owns that topic, so a failed graph check cannot be overwritten"/>
+  <arg name="publish_operation_mode_availability" default="false"
+       description="true: control_mode_manager also publishes /system/operation_mode/availability, always 'autonomous available'. Off by default: Autoware's diagnostic graph converter owns that topic, and a second, unconditional publisher lets the MRM handler and engage read 'available' over a failed check. Only for a stack with no graph that still needs the topic"/>
   <arg name="speed_controller_dt_source" default="velocity_report"
        description="dt handed to the plug-in: velocity_report (legacy; time since the last 20 Hz report, so ~3x effective ki at the 100 Hz loop) or loop (the loop period)"/>
   <arg name="actuator_param_overrides"

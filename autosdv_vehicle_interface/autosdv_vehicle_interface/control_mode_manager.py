@@ -39,8 +39,9 @@ class ControlModeManager(Node):
         # diagnostic graph converter publishes. With both running, the MRM
         # handler and the ADAPI engage check read whichever arrived last, so
         # this node's unconditional "autonomous available" can hide a failed
-        # graph check. A stack that runs the graph should turn this off.
-        self.declare_parameter('publish_operation_mode_availability', True)
+        # graph check. Off by default (2026-10-13); only a stack with no
+        # diagnostic graph that still needs the topic should turn it on.
+        self.declare_parameter('publish_operation_mode_availability', False)
         
         # Get parameters
         self.publish_rate = self.get_parameter('publish_rate').value
