@@ -23,6 +23,9 @@
        description="control_mode_manager also publishes /system/operation_mode/availability (always 'autonomous available'). false when the diagnostic graph converter owns that topic, so a failed graph check cannot be overwritten"/>
   <arg name="speed_controller_dt_source" default="velocity_report"
        description="dt handed to the plug-in: velocity_report (legacy; time since the last 20 Hz report, so ~3x effective ki at the 100 Hz loop) or loop (the loop period)"/>
+  <arg name="actuator_param_overrides"
+       default="$(find-pkg-share autosdv_vehicle_interface)/params/actuator.yaml"
+       description="a param file loaded into the actuator after actuator.yaml, for per-launch overrides such as a measured tire_angle_to_steer_ratio (the Lab 2 waypoint launch). Default: actuator.yaml again, which changes nothing"/>
 
   <!-- Vehicle Interface -->
   <group if="$(var launch_vehicle_interface)">
@@ -33,6 +36,7 @@
           args="--ros-args --log-level $(var actuator_log_level)">
       <param from="$(find-pkg-share autosdv_vehicle_interface)/params/actuator.yaml"/>
       <param from="$(var vehicle_info_param_file)"/>
+      <param from="$(var actuator_param_overrides)"/>
       <!-- Override dry_run parameter based on is_simulation flag -->
       <param name="dry_run" value="$(var is_simulation)"/>
       <param name="speed_controller_class" value="$(var speed_controller_class)"/>
