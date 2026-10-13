@@ -387,6 +387,7 @@ class AutoSdvActuator(Node):
         controller_params.update(
             self.parse_speed_controller_params(params["speed_controller_params"])
         )
+        controller_params.update(self.nested_speed_controller_params())
 
         controller_class = params["speed_controller_class"] or DEFAULT_SPEED_CONTROLLER
         try:
@@ -423,6 +424,24 @@ class AutoSdvActuator(Node):
 
         # PWM output filtering for smoother control (from actuator.yaml)
         self.pwm_output_alpha = params["pwm_output_alpha"]
+
+    def nested_speed_controller_params(self):
+        """
+        Collect ``speed_controller_params.<key>`` overrides.
+
+        A launch file that is handed ``{kp: 15.0}`` for the string parameter
+        ``speed_controller_params`` can see it parsed as YAML before it reaches
+        the node (ros2 launch and play_launch both do), and the node then gets
+        a nested mapping, which ROS flattens into ``speed_controller_params.kp``
+        overrides. The string parameter stays empty and the keys would be lost
+        without this, so both spellings are accepted; these win on a collision.
+        """
+        prefix = "speed_controller_params."
+        found = {}
+        for name, param in getattr(self, "_parameter_overrides", {}).items():
+            if name.startswith(prefix) and len(name) > len(prefix):
+                found[name[len(prefix):]] = param.value
+        return found
 
     @staticmethod
     def parse_speed_controller_params(text):

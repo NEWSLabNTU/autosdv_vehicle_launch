@@ -234,6 +234,13 @@ def test_speed_controller_params_are_merged(make_node):
     assert node.speed_controller.params["init_pwm"] == INIT_PWM
 
 
+def test_speed_controller_params_arrive_as_a_nested_mapping(make_node):
+    # what the actuator sees when the launch system parses "{kp_speed: 30.0}" as YAML
+    node = make_node(**{"speed_controller_params.kp_speed": 30.0})
+    assert node.speed_controller.pid.kp == 30.0
+    assert node.speed_controller.params["init_pwm"] == INIT_PWM
+
+
 def test_speed_controller_params_must_be_a_mapping(make_node):
     with pytest.raises(ValueError):
         make_node(speed_controller_params="[1, 2]")
