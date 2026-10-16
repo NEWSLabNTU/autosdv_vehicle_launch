@@ -79,8 +79,12 @@ def target_profile(t):
     return 0.8
 
 
-def run_sequence(params, seed, duration=12.0):
-    """Return per-tick tuples from the legacy and the new implementation."""
+def run_sequence(params, seed, duration=12.0, coast_on_stop=False, return_modes=False):
+    """Return per-tick tuples from the legacy and the new implementation.
+
+    COAST is the one intended departure from the legacy code, so it is off
+    here; test_zero_target_never_drives_forward covers it.
+    """
     rng = random.Random(seed)
 
     legacy = LegacyLongitudinal(params)
@@ -94,6 +98,7 @@ def run_sequence(params, seed, duration=12.0):
             full_stop_threshold=params["full_stop_threshold"],
             brake_threshold=params["brake_threshold"],
             velocity_deadband=params["velocity_deadband"],
+            coast_on_stop=coast_on_stop,
         ),
         controller,
     )
@@ -105,6 +110,7 @@ def run_sequence(params, seed, duration=12.0):
     next_report = 0.25 + rng.uniform(0.0, 0.05)  # first report after start
     t = 0.0
     rows = []
+    modes = []
 
     while t < duration:
         # Loop jitter, as a ROS timer has
@@ -146,8 +152,9 @@ def run_sequence(params, seed, duration=12.0):
             legacy.state.speed_control_pwm_offset, shell.speed_control_pwm_offset,
         ))
         pwm = new_pwm
+        modes.append(shell.mode.value)
 
-    return rows
+    return (rows, modes) if return_modes else rows
 
 
 @pytest.mark.parametrize("variant", sorted(VARIANTS))
@@ -183,3 +190,21 @@ def test_sequence_exercises_every_legacy_mode():
     held = sum(1 for a, b in zip(rows, rows[1:]) if b[1] == a[3] and b[1] != params["init_pwm"])
     assert held > 0                                          # DEADBAND_HOLD
     assert any(r[5] for r in rows)                           # reverse requested
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2, 3, 4])
+def test_zero_target_never_drives_forward(seed):
+    """With COAST (the default), a stop command never yields forward PWM."""
+    params = dict(BASE)
+    rows, modes = run_sequence(params, seed, coast_on_stop=True, return_modes=True)
+    for row in rows:
+        t, _, npwm = row[:3]
+        target = target_profile(t)
+        if target is not None and abs(target) < params["full_stop_threshold"]:
+            assert npwm <= params["init_pwm"], f"t={t}: forward PWM {npwm} on a stop command"
+    assert "coast" in modes
+    # and the legacy code does drive forward there: the bug COAST removes
+    legacy_rows = run_sequence(params, seed)
+    assert any(r[1] > params["init_pwm"] for r in legacy_rows
+               if target_profile(r[0]) is not None
+               and abs(target_profile(r[0])) < params["full_stop_threshold"])

@@ -16,6 +16,8 @@ OVERRIDE_NEUTRAL   the same, once stopped or the brake time    ``init_pwm``
 WAITING            no command or no velocity received yet      ``init_pwm``
 BRAKE              target ~ 0 and measured > brake_threshold   ``brake_pwm``
 FULL_STOP          target ~ 0 and measured ~ 0                 ``init_pwm``
+COAST              target ~ 0 and measured between the two     ``init_pwm``
+                   thresholds above
 DEADBAND_HOLD      ``|error| < velocity_deadband``             last PWM
 ACTIVE             otherwise                                   plug-in, clamped
 =================  ==========================================  ==============
@@ -23,6 +25,14 @@ ACTIVE             otherwise                                   plug-in, clamped
 BRAKE, FULL_STOP, DEADBAND_HOLD and ACTIVE are the modes the actuator has
 always had, reproduced exactly; ``test/test_speed_controller_equivalence.py``
 proves it against a frozen copy of the pre-split code.
+
+COAST is new (``coast_on_stop``, on by default; the equivalence test turns
+it off). Before it, a zero target with the measured speed between
+``full_stop_threshold`` and ``brake_threshold`` (0.1..0.2 m/s) fell through
+to ACTIVE, and the plug-in, its integral still holding what cruising needed,
+drove the motor forward on a stop command: a car slowing through that band
+re-accelerated into BRAKE, and cycled BRAKE/ACTIVE/FULL_STOP while creeping
+forward. A stop command now never reaches the plug-in.
 
 This module has no ROS dependency, so the motor bench (``speed_bench.py``) runs
 the same shell the vehicle does.
@@ -42,6 +52,7 @@ class Mode(Enum):
     WAITING = "waiting"
     BRAKE = "brake"
     FULL_STOP = "full_stop"
+    COAST = "coast"
     DEADBAND_HOLD = "deadband_hold"
     ACTIVE = "active"
     OVERRIDE_BRAKE = "override_brake"
@@ -78,6 +89,9 @@ class ShellConfig:
         dt_source: ``"velocity_report"`` -- dt is the time since the last
             velocity report, the legacy behaviour -- or ``"loop"``, the time
             since the previous control tick
+        coast_on_stop: COAST a zero target below ``brake_threshold`` instead
+            of running the plug-in (see the module docstring). Off only to
+            compare against the legacy code.
     """
 
     init_pwm: int
@@ -91,6 +105,7 @@ class ShellConfig:
     controller_fault_holdoff: float = 1.0
     controller_max_faults: int = 3
     dt_source: str = DT_SOURCE_VELOCITY_REPORT
+    coast_on_stop: bool = True
 
 
 class LongitudinalShell:
@@ -223,6 +238,12 @@ class LongitudinalShell:
         if (abs(current_speed) < cfg.full_stop_threshold and
                 abs(target_speed) < cfg.full_stop_threshold):
             self.mode = Mode.FULL_STOP
+            return cfg.init_pwm
+
+        # A stop command between the two thresholds: neutral, never the
+        # plug-in, whose integral would drive the car forward
+        if cfg.coast_on_stop and abs(target_speed) < cfg.full_stop_threshold:
+            self.mode = Mode.COAST
             return cfg.init_pwm
 
         # Low-pass filter on measured velocity
