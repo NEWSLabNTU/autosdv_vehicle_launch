@@ -33,6 +33,9 @@ flowchart TD
     %% Full Stop Mode
     SafetyCheck -->|target ≈ 0 AND<br/>measured ≈ 0| FullStop[Full Stop Mode<br/>────────────<br/>Output INIT_PWM]
 
+    %% Coast Mode
+    SafetyCheck -->|target ≈ 0 AND<br/>measured in between| Coast[Coast Mode<br/>────────────<br/>Output INIT_PWM]
+
     %% Deadband Hold Mode
     SafetyCheck -->|error < deadband| DeadbandHold[Deadband Hold Mode<br/>────────────<br/>Hold last PWM]
 
@@ -42,6 +45,7 @@ flowchart TD
     %% Output Selection
     EmergencyBrake -->|pwm| OutputMux{Mode Select}
     FullStop -->|pwm| OutputMux
+    Coast -->|pwm| OutputMux
     DeadbandHold -->|pwm| OutputMux
     ActiveControl -->|pwm| OutputMux
 
@@ -59,14 +63,19 @@ flowchart TD
     class ControlCmd,VelReport sourceClass
     class SafetyCheck,OutputMux decisionClass
     class ActiveControl modeClass
-    class EmergencyBrake,FullStop,DeadbandHold specialClass
+    class EmergencyBrake,FullStop,Coast,DeadbandHold specialClass
     class Motor sinkClass
     class DataSources invisibleGroup
 ```
 
-The controller operates in four modes:
+The controller operates in five modes:
 - **Emergency Brake**: Apply brake PWM when target is near zero but vehicle is still moving
+  faster than `brake_threshold`
 - **Full Stop**: Output neutral PWM when both target and measured velocities are near zero
+- **Coast**: Output neutral PWM when the target is near zero and the measured speed lies
+  between `full_stop_threshold` and `brake_threshold`. Before this mode existed that band
+  fell through to Active Control, where the PID's integral (still holding what cruising
+  needed) drove the motor forward on a stop command
 - **Deadband Hold**: Maintain current PWM when velocity error is within deadband (prevents jitter)
 - **Active Control**: PID-based speed control with forward/reverse direction mapping
 
@@ -424,7 +433,12 @@ The velocity report node reads hall effect sensor data and publishes vehicle vel
 
 ### Features
 - Reads from hall effect sensor (KY-003) connected to GPIO pin
-- Calculates vehicle velocity based on wheel rotation
+- Calculates vehicle velocity based on wheel rotation: edge-to-edge timing on the
+  markers, smoothed by an EMA (alpha 0.3)
+- Lets the estimate fall once an edge is overdue: no edge for `t` seconds caps it at
+  1.5 x marker spacing / `t`, so a sudden stop reads as a stop within a few reports
+  instead of holding the last speed until the 0.5 s timeout (which the EKF would
+  integrate into a position overshoot); zero after 0.5 s without an edge
 - Publishes velocity reports to Autoware stack
 
 ### Configuration Parameters

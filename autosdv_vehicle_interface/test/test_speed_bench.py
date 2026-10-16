@@ -92,6 +92,28 @@ def test_hall_sensor_reads_constant_speed():
     assert sensor.report(t + 0.6) == 0.0
 
 
+def test_hall_sensor_decays_after_a_sudden_stop():
+    sensor = HallSpeedSensor()
+    v, t, d = 0.6, 0.0, 0.0
+    while t < 1.0:
+        t += 0.001
+        d += v * 0.001
+        sensor.update(t, d)
+    # the wheel stops dead: no more edges
+    edge = sensor.last_edge_time
+    period = sensor.distance_per_marker / v
+    # an edge late by less than the slack is jitter, not a slowdown
+    assert sensor.report(edge + 1.2 * period) == pytest.approx(0.6, rel=0.05)
+    # then the report falls with the gap instead of holding 0.6 until the timeout
+    assert sensor.report(edge + 0.1) < 0.45
+    assert sensor.report(edge + 0.3) < 0.15
+    # what an EKF integrates from the stop to the timeout: well under the
+    # 0.3 m that holding the last value gives
+    travelled = sum(sensor.report(edge + k * 0.05) * 0.05 for k in range(11))
+    assert travelled < 0.15
+    assert sensor.report(edge + 0.6) == 0.0
+
+
 def test_actuator_defaults_match_params_file():
     with open(ACTUATOR_YAML) as f:
         params = yaml.safe_load(f)["/**"]["ros__parameters"]

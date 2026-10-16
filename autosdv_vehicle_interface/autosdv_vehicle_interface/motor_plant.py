@@ -10,7 +10,8 @@ the car:
   around ``init_pwm``, braking below it, and coasting inside it.
 - :class:`HallSpeedSensor` -- vehicle speed -> the ``velocity_report`` node's
   output: edge-to-edge timing on 12 wheel markers, the node's EMA (alpha 0.3),
-  published at 20 Hz, zero after 0.5 s without an edge, and no sign.
+  published at 20 Hz, capped by the edge gap once an edge is overdue, zero
+  after 0.5 s without an edge, and no sign.
 
 PROVISIONAL: :class:`MotorPlantParams` are guesses consistent with
 ``params/actuator.yaml`` (neutral 370, PWM range 360..470), not values fitted
@@ -109,10 +110,12 @@ class HallSpeedSensor:
         markers_per_rotation: int = 12,
         alpha: float = 0.3,
         timeout: float = 0.5,
+        overdue_slack: float = 1.5,
     ):
         self.distance_per_marker = wheel_diameter * math.pi / markers_per_rotation
         self.alpha = alpha
         self.timeout = timeout
+        self.overdue_slack = overdue_slack
 
         self.current_velocity = 0.0
         self.last_edge_time: Optional[float] = None
@@ -132,11 +135,28 @@ class HallSpeedSensor:
         self._last_time = now
         self._last_distance = distance
 
+    def _gap_bound(self, now: float) -> float:
+        """Cap the estimate at what the time since the last edge allows.
+
+        No edge for `since` seconds means the wheel rolled less than one marker
+        spacing in that time, so its speed is below distance_per_marker / since.
+        `overdue_slack` leaves room for edge-timing jitter: the cap binds only
+        once an edge is that many times overdue at the current estimate. Without
+        it the estimate holds its last value until the timeout after a stop.
+        """
+        if self.last_edge_time is None:
+            return self.current_velocity
+        since = now - self.last_edge_time
+        if since <= 0.0:
+            return self.current_velocity
+        return min(self.current_velocity, self.overdue_slack * self.distance_per_marker / since)
+
     def _on_edge(self, t: float) -> None:
         if self.last_edge_time is not None:
             dt = t - self.last_edge_time
             if dt > 0.001:
                 instantaneous = self.distance_per_marker / dt
+                self.current_velocity = self._gap_bound(t)
                 if self.current_velocity == 0.0:
                     self.current_velocity = instantaneous
                 else:
@@ -149,4 +169,4 @@ class HallSpeedSensor:
         """Return the speed the node publishes at ``now``."""
         if self.last_edge_time is not None and now - self.last_edge_time > self.timeout:
             self.current_velocity = 0.0
-        return self.current_velocity
+        return self._gap_bound(now)

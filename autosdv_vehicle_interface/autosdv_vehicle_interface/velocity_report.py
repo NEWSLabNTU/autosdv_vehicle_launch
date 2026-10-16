@@ -75,8 +75,31 @@ class AutoSdvVelocityReportNode(Node):
         self.current_velocity = 0.0  # Current velocity estimate (m/s)
         self.velocity_alpha = 0.3  # EMA filter alpha for velocity smoothing
         self.timeout_threshold = 0.5  # If no markers for 0.5s, assume stopped
+        # Once an edge is this many times overdue at the current estimate, cap
+        # the estimate at what the gap allows (see gap_bound)
+        self.overdue_slack = 1.5
 
         self.clock = clock
+
+    def gap_bound(self, now) -> float:
+        """
+        Cap the velocity estimate at what the time since the last edge allows.
+
+        No edge for `since` seconds means the wheel rolled less than one marker
+        spacing in that time, so it is slower than distance_per_marker / since.
+        Without this cap the estimate holds its last value for the whole
+        timeout after the wheel stops (0.57 m/s for 0.5 s after a brake), and
+        the EKF integrates it into a position overshoot. overdue_slack leaves
+        room for edge-timing jitter: the cap binds only once an edge is that
+        many times overdue at the current estimate. It never raises the value.
+        """
+        if self.last_edge_time is None:
+            return self.current_velocity
+        since = (now - self.last_edge_time).nanoseconds / (10**9)
+        if since <= 0.0:
+            return self.current_velocity
+        return min(self.current_velocity,
+                   self.overdue_slack * self.distance_per_marker / since)
 
     def publish_callback(self) -> None:
         """
@@ -98,7 +121,7 @@ class AutoSdvVelocityReportNode(Node):
         msg = VelocityReport()
         msg.header.stamp = curr_time.to_msg()
         msg.header.frame_id = self.frame_id
-        msg.longitudinal_velocity = self.current_velocity  # Forward/backward velocity
+        msg.longitudinal_velocity = self.gap_bound(curr_time)  # Forward/backward velocity
         msg.lateral_velocity = 0.0  # Side-to-side velocity (always 0 for this vehicle)
         msg.heading_rate = 0.0  # Rate of heading change (not measured here)
         self.publisher.publish(msg)
@@ -123,6 +146,9 @@ class AutoSdvVelocityReportNode(Node):
             if dt > 0.001:  # Minimum 1ms between edges (max ~27 m/s for our wheel)
                 # Calculate instantaneous velocity from this edge
                 instantaneous_velocity = self.distance_per_marker / dt
+                # Start from the capped estimate, so a slowdown the cap already
+                # showed does not bounce back up through the EMA
+                self.current_velocity = self.gap_bound(current_time)
 
                 # Apply exponential moving average filter for smoothing
                 if self.current_velocity == 0.0:
