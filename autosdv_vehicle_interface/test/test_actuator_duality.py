@@ -25,15 +25,16 @@ os.environ.setdefault('ROS_DOMAIN_ID', '73')
 rclpy = pytest.importorskip('rclpy')
 actuator = pytest.importorskip('autosdv_vehicle_interface.actuator')
 
+from autosdv_vehicle_interface import hal  # noqa: E402
+from autosdv_vehicle_interface.actuator_core import (  # noqa: E402
+    ActuatorCore,
+    build_controller_params,
+)
+from autosdv_vehicle_interface.safety import InputState  # noqa: E402
+from autosdv_vehicle_interface.speed_controller import load_speed_controller  # noqa: E402
 from autoware_control_msgs.msg import Control  # noqa: E402
 from autoware_vehicle_msgs.msg import VelocityReport  # noqa: E402
 from rosgraph_msgs.msg import Clock  # noqa: E402
-
-from autosdv_vehicle_interface import hal  # noqa: E402
-from autosdv_vehicle_interface.actuator_core import (  # noqa: E402
-    ActuatorCore, build_controller_params)
-from autosdv_vehicle_interface.safety import InputState  # noqa: E402
-from autosdv_vehicle_interface.speed_controller import load_speed_controller  # noqa: E402
 from test_actuator_core import file_params  # noqa: E402
 from test_actuator_node import load_params  # noqa: E402
 

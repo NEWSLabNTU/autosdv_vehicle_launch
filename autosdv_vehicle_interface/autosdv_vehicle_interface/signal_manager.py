@@ -6,16 +6,15 @@ Provides mock turn indicators and hazard lights status for Autoware compatibilit
 import sys
 import time
 
-import rclpy
-from rclpy.node import Node
-from rclpy import Parameter
-
 from autoware_vehicle_msgs.msg import (
-    TurnIndicatorsReport,
-    TurnIndicatorsCommand,
+    HazardLightsCommand,
     HazardLightsReport,
-    HazardLightsCommand
+    TurnIndicatorsCommand,
+    TurnIndicatorsReport,
 )
+import rclpy
+from rclpy import Parameter
+from rclpy.node import Node
 
 
 class SignalManager(Node):

@@ -7,13 +7,12 @@ import sys
 import time
 from typing import Optional
 
-import rclpy
-from rclpy.node import Node
-from rclpy import Parameter
-
+from autoware_control_msgs.msg import Control
 from autoware_vehicle_msgs.msg import ControlModeReport
 from autoware_vehicle_msgs.srv import ControlModeCommand
-from autoware_control_msgs.msg import Control
+import rclpy
+from rclpy import Parameter
+from rclpy.node import Node
 from std_msgs.msg import Bool
 from tier4_system_msgs.msg import OperationModeAvailability
 

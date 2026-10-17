@@ -76,9 +76,11 @@ class SimGPIO:
 
 
 def make_pwm_driver(params: dict, node=None, pca_class=None):
-    """Return the PWM driver for ``params["hardware"]`` (dry runs are the caller's business)."""
+    """Return the PWM driver for ``params["hardware"]``; sim needs ``node``; dry runs skip it."""
     hardware = check_hardware(params.get('hardware', HARDWARE_REAL))
     if hardware == HARDWARE_SIM:
+        if node is None:
+            raise ValueError("hardware 'sim' publishes PWM on a ROS topic: pass the node")
         from rclpy.qos import QoSProfile, ReliabilityPolicy
         from std_msgs.msg import Int32MultiArray
         qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
@@ -99,6 +101,8 @@ def make_pwm_driver(params: dict, node=None, pca_class=None):
 def make_gpio(hardware: str, node=None):
     """Return the GPIO module for ``hardware``: Jetson.GPIO, or a SimGPIO on ``node``."""
     if check_hardware(hardware) == HARDWARE_SIM:
+        if node is None:
+            raise ValueError("hardware 'sim' takes hall edges from a ROS topic: pass the node")
         return SimGPIO(node)
     import Jetson.GPIO as GPIO
     return GPIO

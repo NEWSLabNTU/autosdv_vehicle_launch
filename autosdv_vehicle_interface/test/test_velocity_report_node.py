@@ -28,11 +28,10 @@ rclpy = pytest.importorskip('rclpy')
 # any machine without Jetson.GPIO
 from autosdv_vehicle_interface import hal  # noqa: E402
 from autosdv_vehicle_interface import velocity_report  # noqa: E402
-from rclpy.parameter import Parameter  # noqa: E402
-from std_msgs.msg import Int64MultiArray  # noqa: E402
-
 from autosdv_vehicle_interface.hal import EDGE_TOPIC  # noqa: E402
 from autosdv_vehicle_interface.velocity_estimator import VelocityEstimator  # noqa: E402
+from rclpy.parameter import Parameter  # noqa: E402
+from std_msgs.msg import Int64MultiArray  # noqa: E402
 
 PARAMS = {'pin': 15, 'rate': 20.0, 'wheel_diameter': 10.5, 'markers_per_rotation': 12,
           'frame_id': 'base_link', 'hardware': 'sim'}

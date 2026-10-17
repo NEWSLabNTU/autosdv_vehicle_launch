@@ -14,12 +14,14 @@
 """ActuatorCore without ROS: the actuator's tick on explicit clocks."""
 import os
 
-import yaml
-
 from autosdv_vehicle_interface.actuator_core import (
-    ActuatorCore, build_controller_params, normalize_params)
+    ActuatorCore,
+    build_controller_params,
+    normalize_params,
+)
 from autosdv_vehicle_interface.longitudinal import Mode
 from autosdv_vehicle_interface.speed_controller import load_speed_controller
+import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PKG = os.path.dirname(HERE)

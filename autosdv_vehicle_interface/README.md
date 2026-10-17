@@ -178,7 +178,8 @@ ros2 launch autosdv_vehicle_launch vehicle_interface.launch.xml \
   bench with the same setting the vehicle uses.
 - The output is clamped to `[min_pwm, max_pwm]`. Note that the default PID
   limits its own offset to `+-(max_pwm - min_pwm) // 2`, so with the shipped
-  values it never commands more than 425.
+  values it never commands more than 425 unless `max_pwm_offset` raises the
+  limit (at most to `max_pwm`, 470).
 - `update()` is called only in Active Control; `reset()` after every override
   episode. An exception from either, or a non-finite/non-numeric return, sends
   the motor to neutral (braking first if moving) with a traceback in the log;

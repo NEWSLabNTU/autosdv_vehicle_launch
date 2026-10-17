@@ -14,9 +14,8 @@
 """Hardware backends: real and simulated PCA9685 and GPIO. No I2C, no GPIO, no ROS graph."""
 import sys
 
-import pytest
-
 from autosdv_vehicle_interface import hal
+import pytest
 
 
 class FakePub:
@@ -77,6 +76,13 @@ def test_make_pwm_driver_sim_publishes_on_the_pwm_topic():
     assert isinstance(drv, hal.SimPCA9685)
     assert node.pubs[0].topic == hal.PWM_TOPIC
     assert node.pubs[0].sent == [[0, 400]]
+
+
+def test_sim_without_a_node_is_a_clear_error():
+    with pytest.raises(ValueError, match='pass the node'):
+        hal.make_pwm_driver({'hardware': 'sim'})
+    with pytest.raises(ValueError, match='pass the node'):
+        hal.make_gpio('sim')
 
 
 def test_sim_gpio_delivers_every_edge_with_its_stamp():

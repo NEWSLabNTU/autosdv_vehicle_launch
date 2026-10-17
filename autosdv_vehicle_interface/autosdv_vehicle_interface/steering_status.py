@@ -7,15 +7,14 @@ Since the vehicle lacks a steering angle sensor, this node reports
 the commanded steering angle directly. The actuator applies the commanded
 angle to the servo, so reporting the command is the best available estimate.
 """
-import sys
 import math
+import sys
 
-import rclpy
-from rclpy.node import Node
-from rclpy import Parameter
-
-from autoware_vehicle_msgs.msg import SteeringReport
 from autoware_control_msgs.msg import Control
+from autoware_vehicle_msgs.msg import SteeringReport
+import rclpy
+from rclpy import Parameter
+from rclpy.node import Node
 
 
 class SteeringStatus(Node):

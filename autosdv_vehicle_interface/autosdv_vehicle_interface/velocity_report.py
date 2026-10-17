@@ -12,13 +12,12 @@ from the autosdv_rc_sim plant, each carrying its true time).
 import math
 import sys
 
+from autosdv_vehicle_interface.hal import HARDWARE_REAL, make_gpio
+from autosdv_vehicle_interface.velocity_estimator import VelocityEstimator
+from autoware_vehicle_msgs.msg import VelocityReport
 import rclpy
 from rclpy import Parameter
 from rclpy.node import Node
-from autoware_vehicle_msgs.msg import VelocityReport
-
-from autosdv_vehicle_interface.hal import HARDWARE_REAL, make_gpio
-from autosdv_vehicle_interface.velocity_estimator import VelocityEstimator
 
 
 class AutoSdvVelocityReportNode(Node):

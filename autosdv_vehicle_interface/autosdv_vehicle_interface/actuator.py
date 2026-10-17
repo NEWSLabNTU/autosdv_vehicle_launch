@@ -5,31 +5,25 @@ Actuator control node for AutoSDV using Ackermann control.
 This module implements a cascaded PID controller for vehicle's motor and steering using Ackermann steering model.
 """
 import atexit
-import sys
 import math
+import sys
 import time
 from typing import Optional
 
 import yaml
+
 try:
     from Adafruit_PCA9685 import PCA9685
 except ImportError:  # a laptop: only hardware:=sim or dry_run can run
     PCA9685 = None
 
-import rclpy
-from rclpy.node import Node
-from rclpy import Parameter
-from rclpy.executors import ExternalShutdownException
-from rclpy.qos import DurabilityPolicy, QoSProfile
-from autoware_adapi_v1_msgs.msg import MrmState
-from autoware_control_msgs.msg import Control
-from autoware_vehicle_msgs.msg import VelocityReport
-from std_msgs.msg import MultiArrayDimension, String
-from autoware_internal_debug_msgs.msg import Float32MultiArrayStamped
-from tier4_vehicle_msgs.msg import VehicleEmergencyStamped
-
 from autosdv_vehicle_interface.actuator_core import (  # noqa: F401  (State, Config re-exported)
-    ActuatorCore, build_controller_params, Config, DEFAULTS, State)
+    ActuatorCore,
+    build_controller_params,
+    Config,
+    DEFAULTS,
+    State,
+)
 from autosdv_vehicle_interface.hal import check_hardware, HARDWARE_SIM, make_pwm_driver
 from autosdv_vehicle_interface.safety import (
     classify_stamp_age,
@@ -44,6 +38,17 @@ from autosdv_vehicle_interface.speed_controller import (  # noqa: F401
     DEFAULT_SPEED_CONTROLLER,
     load_speed_controller,
 )
+from autoware_adapi_v1_msgs.msg import MrmState
+from autoware_control_msgs.msg import Control
+from autoware_internal_debug_msgs.msg import Float32MultiArrayStamped
+from autoware_vehicle_msgs.msg import VelocityReport
+import rclpy
+from rclpy import Parameter
+from rclpy.executors import ExternalShutdownException
+from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile
+from std_msgs.msg import MultiArrayDimension, String
+from tier4_vehicle_msgs.msg import VehicleEmergencyStamped
 
 
 class AutoSdvActuator(Node):

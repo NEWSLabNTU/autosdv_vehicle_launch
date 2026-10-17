@@ -3,17 +3,16 @@
 Synthetic Gear Manager for AutoSDV.
 Maps motor PWM states to Autoware-compatible gear positions and handles gear commands.
 """
+from enum import Enum
 import sys
 import time
-from enum import Enum
 from typing import Optional
 
-import rclpy
-from rclpy.node import Node
-from rclpy import Parameter
-
-from autoware_vehicle_msgs.msg import GearReport, GearCommand, VelocityReport
 from autoware_internal_debug_msgs.msg import Float32MultiArrayStamped
+from autoware_vehicle_msgs.msg import GearCommand, GearReport, VelocityReport
+import rclpy
+from rclpy import Parameter
+from rclpy.node import Node
 
 
 class MotorState(Enum):
