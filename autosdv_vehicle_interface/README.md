@@ -485,6 +485,24 @@ Control parameters are configured in `params/actuator.yaml`:
 - `steering_speed`: Maximum steering rate (rad/s)
 - PWM values: `min_steer` (350), `init_steer` (400), `max_steer` (450)
 
+## Hardware backends and the simulation clock
+
+`hardware` (actuator and velocity_report; launch argument of
+`vehicle_interface.launch.xml`, default `real`) selects the two hardware
+touchpoints: `real` writes PWM through the PCA9685 and times hall edges on
+Jetson.GPIO; `sim` writes PWM to `/rc_sim/pwm` and reads hall edges, each
+with its true time, from `/rc_sim/hall_edges` (the autosdv_rc_sim plant).
+Nothing else changes. `dry_run` still disables PWM output entirely.
+
+With `use_sim_time:=true` the actuator takes every time it uses (the PID's
+dt, the watchdogs) from the ROS clock, so a simulator running slower or
+faster than real time does not distort the loop. Without it, the wall clock
+is used exactly as before.
+
+The per-tick logic lives in `actuator_core.ActuatorCore` and the speed
+estimate in `velocity_estimator.VelocityEstimator`; the nodes only wrap them,
+which is what lets the rc_sim grader run the car's code without ROS.
+
 ## Hardware Interface
 
 - **PCA9685 PWM Driver** (I2C)

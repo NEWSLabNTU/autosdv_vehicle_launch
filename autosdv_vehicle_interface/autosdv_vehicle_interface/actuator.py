@@ -9,10 +9,12 @@ import sys
 import math
 import time
 from typing import Optional
-from dataclasses import dataclass
 
 import yaml
-from Adafruit_PCA9685 import PCA9685
+try:
+    from Adafruit_PCA9685 import PCA9685
+except ImportError:  # a laptop: only hardware:=sim or dry_run can run
+    PCA9685 = None
 
 import rclpy
 from rclpy.node import Node
@@ -26,17 +28,11 @@ from std_msgs.msg import MultiArrayDimension, String
 from autoware_internal_debug_msgs.msg import Float32MultiArrayStamped
 from tier4_vehicle_msgs.msg import VehicleEmergencyStamped
 
-from autosdv_vehicle_interface.longitudinal import (
-    LongitudinalShell,
-    OVERRIDE_COMMAND_TIMEOUT,
-    OVERRIDE_EMERGENCY,
-    OVERRIDE_VELOCITY_TIMEOUT,
-    ShellConfig,
-)
+from autosdv_vehicle_interface.actuator_core import (  # noqa: F401  (State, Config re-exported)
+    ActuatorCore, build_controller_params, Config, DEFAULTS, State)
+from autosdv_vehicle_interface.hal import check_hardware, HARDWARE_SIM, make_pwm_driver
 from autosdv_vehicle_interface.safety import (
     classify_stamp_age,
-    InputState,
-    InputWatchdog,
     mrm_requires_stop,
     StampVerdict,
     write_neutral,
@@ -76,16 +72,14 @@ class AutoSdvActuator(Node):
         # Get parameter values
         parameter_values = self.get_all_parameter_values()
 
-        # Create configuration
-        self.config = self.create_config(parameter_values)
+        # Under use_sim_time every time this node uses comes from the ROS clock
+        # (the simulator's /clock); otherwise wall time, exactly as before.
+        self._use_ros_clock = bool(self.get_parameter("use_sim_time").value)
 
-        # Initialize PID controllers
+        # Speed controller and the ROS-free core (config, state, watchdogs)
         self.initialize_pid_controllers(parameter_values)
 
-        # Initialize controller state with config values
-        self.state = self.initialize_state(parameter_values)
-
-        # Initialize safety monitors (watchdogs and emergency inputs)
+        # Initialize safety settings (emergency inputs)
         self.initialize_safety(parameter_values)
 
         # Initialize hardware
@@ -118,6 +112,9 @@ class AutoSdvActuator(Node):
 
         # Dry-run mode for simulation
         self.declare_parameter("dry_run", Parameter.Type.BOOL)
+
+        # PWM backend: real (PCA9685 over I2C) or sim (the rc_sim plant)
+        self.declare_parameter("hardware", "real")
 
         # Longitudinal control parameters
         self.declare_parameter("kp_speed", Parameter.Type.DOUBLE)
@@ -162,20 +159,20 @@ class AutoSdvActuator(Node):
         self.declare_parameter("pwm_output_alpha", Parameter.Type.DOUBLE)
 
         # Speed controller plug-in (see speed_controller.py)
-        self.declare_parameter("speed_controller_class", DEFAULT_SPEED_CONTROLLER)
-        self.declare_parameter("speed_controller_params", "")
-        self.declare_parameter("speed_controller_dt_source", "velocity_report")
-        self.declare_parameter("controller_fault_holdoff", 1.0)
-        self.declare_parameter("controller_max_faults", 3)
+        self.declare_parameter("speed_controller_class", DEFAULTS["speed_controller_class"])
+        self.declare_parameter("speed_controller_params", DEFAULTS["speed_controller_params"])
+        self.declare_parameter("speed_controller_dt_source", DEFAULTS["speed_controller_dt_source"])
+        self.declare_parameter("controller_fault_holdoff", DEFAULTS["controller_fault_holdoff"])
+        self.declare_parameter("controller_max_faults", DEFAULTS["controller_max_faults"])
 
         # Safety: watchdogs, emergency inputs, override behaviour
-        self.declare_parameter("control_cmd_timeout", 0.3)
-        self.declare_parameter("control_cmd_max_stamp_age", 0.5)
-        self.declare_parameter("velocity_timeout", 0.5)
-        self.declare_parameter("override_brake_duration", 1.5)
-        self.declare_parameter("enable_emergency_input", True)
-        self.declare_parameter("emergency_stop_on_any_mrm", False)
-        self.declare_parameter("neutral_write_timeout", 0.5)
+        self.declare_parameter("control_cmd_timeout", DEFAULTS["control_cmd_timeout"])
+        self.declare_parameter("control_cmd_max_stamp_age", DEFAULTS["control_cmd_max_stamp_age"])
+        self.declare_parameter("velocity_timeout", DEFAULTS["velocity_timeout"])
+        self.declare_parameter("override_brake_duration", DEFAULTS["override_brake_duration"])
+        self.declare_parameter("enable_emergency_input", DEFAULTS["enable_emergency_input"])
+        self.declare_parameter("emergency_stop_on_any_mrm", DEFAULTS["emergency_stop_on_any_mrm"])
+        self.declare_parameter("neutral_write_timeout", DEFAULTS["neutral_write_timeout"])
 
     def get_all_parameter_values(self):
         """
@@ -213,6 +210,8 @@ class AutoSdvActuator(Node):
             .get_parameter_value()
             .bool_value
         )
+
+        params["hardware"] = check_hardware(self.get_parameter("hardware").value)
 
         # PWM parameters
         params["min_pwm"] = (
@@ -331,46 +330,6 @@ class AutoSdvActuator(Node):
 
         return params
 
-    def create_config(self, params):
-        """
-        Create the configuration object.
-
-        Args:
-            params: Dictionary with parameter values
-
-        Returns:
-            Config: Configuration object
-        """
-        return Config(
-            min_pwm=params["min_pwm"],
-            init_pwm=params["init_pwm"],
-            max_pwm=params["max_pwm"],
-            brake_pwm=params["brake_pwm"],
-            min_steer=params["min_steer"],
-            init_steer=params["init_steer"],
-            max_steer=params["max_steer"],
-            tire_angle_to_steer_ratio=params["tire_angle_to_steer_ratio"],
-            steering_speed=params["steering_speed"],
-            max_steering_angle=params["max_steering_angle"],
-            wheelbase=params["wheelbase"],
-            track_width=params["track_width"],
-        )
-
-    # Actuator parameters every speed controller receives in its params dict
-    SPEED_CONTROLLER_BASE_PARAMS = (
-        "init_pwm",
-        "min_pwm",
-        "max_pwm",
-        "brake_pwm",
-        "rate",
-        "kp_speed",
-        "ki_speed",
-        "kd_speed",
-        "integral_limit",
-        "enable_conditional_integration",
-        "derivative_filter_alpha",
-    )
-
     def initialize_pid_controllers(self, params):
         """
         Load the speed controller plug-in and build the longitudinal shell.
@@ -381,12 +340,8 @@ class AutoSdvActuator(Node):
         Args:
             params: Dictionary with parameter values
         """
-        controller_params = {
-            name: params[name] for name in self.SPEED_CONTROLLER_BASE_PARAMS
-        }
-        controller_params.update(
-            self.parse_speed_controller_params(params["speed_controller_params"])
-        )
+        controller_params = build_controller_params(
+            params, self.parse_speed_controller_params(params["speed_controller_params"]))
         controller_params.update(self.nested_speed_controller_params())
 
         controller_class = params["speed_controller_class"] or DEFAULT_SPEED_CONTROLLER
@@ -397,23 +352,14 @@ class AutoSdvActuator(Node):
             raise
         self.get_logger().info(f"Speed controller: {controller_class}")
 
-        self.longitudinal = LongitudinalShell(
-            ShellConfig(
-                init_pwm=params["init_pwm"],
-                min_pwm=params["min_pwm"],
-                max_pwm=params["max_pwm"],
-                brake_pwm=params["brake_pwm"],
-                full_stop_threshold=params["full_stop_threshold"],
-                brake_threshold=params["brake_threshold"],
-                velocity_deadband=params["velocity_deadband"],
-                override_brake_duration=params["override_brake_duration"],
-                controller_fault_holdoff=params["controller_fault_holdoff"],
-                controller_max_faults=params["controller_max_faults"],
-                dt_source=params["speed_controller_dt_source"],
-            ),
-            self.speed_controller,
-            logger=self.get_logger(),
-        )
+        self.core = ActuatorCore(params, self.speed_controller,
+                                 logger=self.get_logger(), start_time=self._now())
+        # The node's long-standing attribute names, kept for its callers and tests
+        self.config = self.core.config
+        self.state = self.core.state
+        self.longitudinal = self.core.longitudinal
+        self.cmd_watchdog = self.core.cmd_watchdog
+        self.velocity_watchdog = self.core.velocity_watchdog
 
         # Store filtering and deadband parameters as instance variables
         self.velocity_deadband = params["velocity_deadband"]
@@ -424,6 +370,34 @@ class AutoSdvActuator(Node):
 
         # PWM output filtering for smoother control (from actuator.yaml)
         self.pwm_output_alpha = params["pwm_output_alpha"]
+
+    @property
+    def gate_emergency(self) -> bool:
+        return self.core.gate_emergency
+
+    @gate_emergency.setter
+    def gate_emergency(self, value: bool) -> None:
+        self.core.gate_emergency = value
+
+    @property
+    def mrm_emergency(self) -> bool:
+        return self.core.mrm_emergency
+
+    @mrm_emergency.setter
+    def mrm_emergency(self, value: bool) -> None:
+        self.core.mrm_emergency = value
+
+    def _now(self) -> float:
+        """Seconds for dt and the shell: the ROS clock under use_sim_time, else wall time."""
+        if self._use_ros_clock:
+            return self.get_clock().now().nanoseconds * 1e-9
+        return time.time()
+
+    def _monotonic(self) -> float:
+        """Seconds for the watchdogs: the ROS clock under use_sim_time, else monotonic."""
+        if self._use_ros_clock:
+            return self.get_clock().now().nanoseconds * 1e-9
+        return time.monotonic()
 
     def nested_speed_controller_params(self):
         """
@@ -464,49 +438,18 @@ class AutoSdvActuator(Node):
 
     def initialize_safety(self, params):
         """
-        Set up the command/velocity watchdogs and the emergency inputs.
+        Set up the stamp check and the emergency inputs (the watchdogs live in the core).
 
         Args:
             params: Dictionary with parameter values
         """
-        logger = self.get_logger()
-        self.cmd_watchdog = InputWatchdog(
-            "control command", params["control_cmd_timeout"], logger
-        )
-        self.velocity_watchdog = InputWatchdog(
-            "velocity report", params["velocity_timeout"], logger
-        )
         self.cmd_max_stamp_age = params["control_cmd_max_stamp_age"]
         self.enable_emergency_input = params["enable_emergency_input"]
         self.emergency_stop_on_any_mrm = params["emergency_stop_on_any_mrm"]
         self.neutral_write_timeout = params["neutral_write_timeout"]
 
-        # Emergency flags, one per source; either one stops the motor
-        self.gate_emergency = False
-        self.mrm_emergency = False
-
         # Once-per-episode logging of rejected commands
         self._last_cmd_rejection = None
-
-    def initialize_state(self, params):
-        """
-        Initialize the controller state.
-
-        Args:
-            params: Dictionary with parameter values from actuator.yaml
-
-        Returns:
-            State: State object
-        """
-        return State(
-            target_speed=None,
-            current_speed=None,
-            target_tire_angle=None,
-            current_tire_angle=None,
-            # Control state
-            last_speed=0.0,
-            last_update_time=time.time(),
-        )
 
     def initialize_pwm_driver(self, params):
         """
@@ -526,9 +469,13 @@ class AutoSdvActuator(Node):
             return None
 
         try:
-            driver = PCA9685(address=params["i2c_address"], busnum=params["i2c_busnum"])
-            driver.set_pwm_freq(params["pwm_freq"])
-            self.get_logger().info(f"PCA9685 initialized successfully on I2C bus {params['i2c_busnum']}, address 0x{params['i2c_address']:02x}")
+            driver = make_pwm_driver(params, node=self, pca_class=PCA9685)
+            if params["hardware"] == HARDWARE_SIM:
+                self.get_logger().info("Simulated PCA9685: PWM goes to the rc_sim plant")
+            else:
+                self.get_logger().info(
+                    f"PCA9685 initialized successfully on I2C bus {params['i2c_busnum']}, "
+                    f"address 0x{params['i2c_address']:02x}")
             return driver
         except Exception as e:
             self.get_logger().error(f"Failed to initialize PCA9685: {e}")
@@ -598,19 +545,7 @@ class AutoSdvActuator(Node):
         Args:
             msg: VelocityReport message containing current vehicle speed
         """
-        # Store the last speed before updating
-        self.state.last_speed = (
-            self.state.current_speed if self.state.current_speed is not None else 0.0
-        )
-
-        # Update current speed
-        speed = msg.longitudinal_velocity
-        self.state.current_speed = speed
-
-        # Update timestamp
-        current_time = time.time()
-        self.state.last_update_time = current_time
-        self.velocity_watchdog.feed(time.monotonic())
+        self.core.on_velocity(self._now(), self._monotonic(), msg.longitudinal_velocity)
 
     def control_callback(self, msg):
         """
@@ -636,15 +571,8 @@ class AutoSdvActuator(Node):
             self.get_logger().info("Control commands are usable again")
             self._last_cmd_rejection = None
 
-        self.cmd_watchdog.feed(time.monotonic())
-        self.state.target_speed = msg.longitudinal.velocity
-        self.state.target_tire_angle = msg.lateral.steering_tire_angle
-
-        # Clamp the target steering angle to the vehicle's maximum steering capability
-        max_angle = self.config.max_steering_angle
-        self.state.target_tire_angle = max(
-            -max_angle, min(self.state.target_tire_angle, max_angle)
-        )
+        self.core.on_command(
+            self._monotonic(), msg.longitudinal.velocity, msg.lateral.steering_tire_angle)
 
     def check_control_cmd(self, msg) -> Optional[str]:
         """
@@ -695,65 +623,13 @@ class AutoSdvActuator(Node):
                 self.get_logger().info(f"MRM cleared (state {msg.state})")
         self.mrm_emergency = emergency
 
-    def select_override(self, cmd_state: InputState, velocity_state: InputState) -> Optional[str]:
-        """Return the reason the motor must stop regardless of the command, or None."""
-        if self.gate_emergency or self.mrm_emergency:
-            return OVERRIDE_EMERGENCY
-        if cmd_state == InputState.TIMED_OUT:
-            return OVERRIDE_COMMAND_TIMEOUT
-        if velocity_state == InputState.TIMED_OUT:
-            return OVERRIDE_VELOCITY_TIMEOUT
-        return None
-
     def timer_callback(self):
         """
         Run one control tick at the configured rate.
 
         Implements the Ackermann control loop similar to CARLA.
         """
-        # Calculate delta time
-        current_time = time.time()
-        delta_time = current_time - self.state.last_update_time
-
-        # Apply velocity filtering (exponential moving average)
-        if self.state.current_speed is not None:
-            raw_measured_velocity = self.state.current_speed
-            if self.state.filtered_measured_velocity == 0.0:
-                # Initialize on first call
-                self.state.filtered_measured_velocity = raw_measured_velocity
-            else:
-                self.state.filtered_measured_velocity = (
-                    self.vel_meas_alpha * raw_measured_velocity +
-                    (1.0 - self.vel_meas_alpha) * self.state.filtered_measured_velocity
-                )
-
-        if self.state.target_speed is not None:
-            raw_target_velocity = self.state.target_speed
-            if self.state.filtered_target_velocity == 0.0:
-                # Initialize on first call
-                self.state.filtered_target_velocity = raw_target_velocity
-            else:
-                self.state.filtered_target_velocity = (
-                    self.vel_cmd_alpha * raw_target_velocity +
-                    (1.0 - self.vel_cmd_alpha) * self.state.filtered_target_velocity
-                )
-
-        # Safety checks: command watchdog, stale velocity, emergency
-        monotonic_now = time.monotonic()
-        cmd_state = self.cmd_watchdog.check(monotonic_now)
-        velocity_state = self.velocity_watchdog.check(monotonic_now)
-        override = self.select_override(cmd_state, velocity_state)
-
-        # Lateral Control (Steering): centre it when the commands have stopped
-        if cmd_state == InputState.TIMED_OUT:
-            steer_value = self.config.init_steer
-        else:
-            steer_value = self.run_steering_control(delta_time)
-
-        # Longitudinal Control (Direct PWM Output)
-        pwm_value = self.run_longitudinal_control(
-            current_time, override, velocity_state == InputState.TIMED_OUT
-        )
+        pwm_value, steer_value = self.core.tick(self._now(), self._monotonic())
         self.publish_mode()
 
         # Set the power of the DC motor
@@ -790,109 +666,6 @@ class AutoSdvActuator(Node):
             self.publish_debug_control_values()
             self.publish_debug_pwm_values(pwm_value, steer_value)
             self.publish_debug_pid_values()
-
-    def run_steering_control(self, delta_time: float) -> int:
-        """
-        Implement the steering control logic using the Ackermann model.
-
-        The Ackermann model calculates inner and outer wheel angles:
-        - Inner angle: atan(L / (R - track/2))
-        - Outer angle: atan(L / (R + track/2))
-
-        Where L = wheelbase, R = turning radius
-
-        For simplicity with single steering servo, we use the average angle.
-
-        Args:
-            delta_time: Time since last update in seconds
-
-        Returns:
-            int: PWM value for the steering servo
-        """
-        # If no target tire angle available, return initial steering value (straight)
-        if self.state.target_tire_angle is None:
-            return self.config.init_steer
-
-        # Clamp the commanded angle to limits
-        commanded_angle = max(
-            -self.config.max_steering_angle,
-            min(self.state.target_tire_angle, self.config.max_steering_angle)
-        )
-
-        # Low-pass filter the commanded angle (from diagram)
-        if not hasattr(self.state, 'filtered_commanded_angle'):
-            self.state.filtered_commanded_angle = commanded_angle
-        else:
-            # EMA filter with alpha = 0.3 (from diagram)
-            alpha = 0.3
-            self.state.filtered_commanded_angle = (
-                alpha * commanded_angle +
-                (1.0 - alpha) * self.state.filtered_commanded_angle
-            )
-
-        clamped_angle = self.state.filtered_commanded_angle
-
-        # Apply Ackermann geometry model
-        if abs(clamped_angle) < 0.001:  # Near zero - straight ahead
-            inner_angle = 0.0
-            outer_angle = 0.0
-        else:
-            # Calculate turning radius from steering angle
-            # R = L / tan(delta) where delta is the steering angle
-            turning_radius = self.config.wheelbase / math.tan(abs(clamped_angle))
-
-            # Calculate inner and outer wheel angles using Ackermann formula
-            # Inner wheel (sharper turn)
-            inner_radius = turning_radius - (self.config.track_width / 2.0)
-            inner_angle = math.atan(self.config.wheelbase / inner_radius)
-
-            # Outer wheel (gentler turn)
-            outer_radius = turning_radius + (self.config.track_width / 2.0)
-            outer_angle = math.atan(self.config.wheelbase / outer_radius)
-
-            # Preserve sign from commanded angle
-            if clamped_angle < 0:
-                inner_angle = -inner_angle
-                outer_angle = -outer_angle
-
-        # For a single servo, use the average of inner and outer angles
-        # (In a real Ackermann system, you'd have separate servos)
-        average_angle = (inner_angle + outer_angle) / 2.0
-
-        # Store for debugging
-        self.state.current_tire_angle = average_angle
-
-        # Convert the steering angle to PWM value
-        steer = average_angle * self.config.tire_angle_to_steer_ratio
-        steer_pwm = self.config.init_steer + int(steer)
-
-        # Clamp PWM to limits
-        steer_pwm = max(self.config.min_steer, min(self.config.max_steer, steer_pwm))
-
-        return steer_pwm
-
-    def run_longitudinal_control(
-        self, now: float, override: Optional[str] = None, velocity_stale: bool = False
-    ) -> int:
-        """
-        Run one tick of the longitudinal shell (see longitudinal.py).
-
-        Args:
-            now: Current wall time [s]; dt is measured on the same clock
-            override: Reason to stop regardless of the command, or None
-            velocity_stale: The last velocity report is too old to trust
-
-        Returns:
-            int: PWM value for motor
-        """
-        current_speed = None if velocity_stale else self.state.current_speed
-        return self.longitudinal.step(
-            now,
-            self.state.target_speed,
-            current_speed,
-            self.state.last_update_time,
-            override,
-        )
 
     def reset_controllers(self) -> None:
         """Reset the speed controller to its initial state."""
@@ -1059,82 +832,6 @@ class AutoSdvActuator(Node):
 
         # Publish message
         self.debug_pid_publisher.publish(msg)
-
-
-@dataclass
-class State:
-    """
-    Dataclass to hold the current state of the controller.
-
-    Attributes:
-        target_speed: Target longitudinal velocity from control commands
-        current_speed: Current measured vehicle speed
-        target_tire_angle: Target steering tire angle from control commands
-        current_tire_angle: Current measured tire angle (if available)
-
-        last_speed: Previous measured speed (for velocity estimation)
-        last_update_time: Wall time of the last velocity report
-
-    The motor-side state (PWM held in deadband, reverse intent, PWM offset)
-    lives in LongitudinalShell.
-    """
-
-    target_speed: Optional[float]
-    current_speed: Optional[float]
-
-    target_tire_angle: Optional[float]
-    current_tire_angle: Optional[float]
-
-    # Control state variables
-    last_speed: float
-    last_update_time: float
-
-    # Filtered values for PID control (with defaults - must be at end)
-    filtered_measured_velocity: float = 0.0
-    filtered_target_velocity: float = 0.0
-    filtered_pwm_output: float = 0.0  # Smoothed PWM output
-
-
-@dataclass
-class Config:
-    """
-    Dataclass to hold the configuration parameters.
-
-    All values are loaded from actuator.yaml (single source of truth).
-
-    Attributes:
-        min_pwm: Minimum PWM value for backward movement
-        init_pwm: Initial PWM value (stopped)
-        max_pwm: Maximum PWM value for forward movement
-        brake_pwm: PWM value for active braking
-        min_steer: Minimum steering PWM value (left turn)
-        init_steer: Initial steering PWM value (straight)
-        max_steer: Maximum steering PWM value (right turn)
-        tire_angle_to_steer_ratio: Conversion ratio from tire angle to steering PWM
-        steering_speed: Maximum steering speed [rad/s]
-        max_steering_angle: Maximum steering angle [rad]
-        wheelbase: Distance between front and rear axles [m]
-        track_width: Distance between left and right wheels [m]
-    """
-
-    min_pwm: int
-    init_pwm: int
-    max_pwm: int
-    brake_pwm: int
-
-    min_steer: int
-    init_steer: int
-    max_steer: int
-
-    tire_angle_to_steer_ratio: float
-
-    # Ackermann-specific parameters
-    steering_speed: float
-    max_steering_angle: float
-
-    # Ackermann geometry (from actuator.yaml)
-    wheelbase: float
-    track_width: float
 
 
 def main():

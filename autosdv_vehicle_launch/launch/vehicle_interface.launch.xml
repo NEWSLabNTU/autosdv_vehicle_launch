@@ -3,6 +3,8 @@
   <!-- Arguments -->
   <arg name="vehicle_id" default="$(env VEHICLE_ID default)"/>
   <arg name="is_simulation" default="false" description="Enable simulation mode (disables PWM output)"/>
+  <arg name="hardware" default="real"
+       description="real: PCA9685 over I2C and the hall sensor on Jetson.GPIO (the car). sim: the autosdv_rc_sim plant (SimPCA9685 writes to /rc_sim/pwm, SimGPIO reads /rc_sim/hall_edges)"/>
   <arg name="launch_vehicle_interface" default="true"/>
   <arg name="actuator_log_level" default="info" description="Log level for actuator node (debug/info/warn/error/fatal)"/>
   <arg name="vehicle_info_param_file" default="$(find-pkg-share autosdv_vehicle_description)/config/vehicle_info.param.yaml"
@@ -39,6 +41,7 @@
       <param from="$(var actuator_param_overrides)"/>
       <!-- Override dry_run parameter based on is_simulation flag -->
       <param name="dry_run" value="$(var is_simulation)"/>
+      <param name="hardware" value="$(var hardware)"/>
       <param name="speed_controller_class" value="$(var speed_controller_class)"/>
       <param name="speed_controller_params" value="$(var speed_controller_params)" type="str"/>
       <param name="speed_controller_dt_source" value="$(var speed_controller_dt_source)"/>
@@ -52,6 +55,7 @@
 
     <node pkg="autosdv_vehicle_interface" exec="velocity_report" name="velocity_report_node" output="screen" if="$(var launch_velocity_report)">
       <param from="$(find-pkg-share autosdv_vehicle_interface)/params/velocity_report.yaml"/>
+      <param name="hardware" value="$(var hardware)"/>
       <remap from="~/output/velocity_status" to="/vehicle/status/velocity_status"/>
     </node>
 

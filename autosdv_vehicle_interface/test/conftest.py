@@ -13,6 +13,7 @@
 # limitations under the License.
 """Shared test helpers. Nothing here touches I2C or GPIO."""
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -97,3 +98,12 @@ def hang_event():
     event = threading.Event()
     yield event
     event.set()
+
+
+def pytest_configure(config):
+    """Keep pytest's temp dirs in the repo's tmp/ (gitignored), never the system /tmp."""
+    if config.option.basetemp is None:
+        repo_root = Path(__file__).resolve().parents[5]
+        basetemp = repo_root / "tmp" / "pytest" / "autosdv_vehicle_interface"
+        basetemp.mkdir(parents=True, exist_ok=True)
+        config.option.basetemp = basetemp
