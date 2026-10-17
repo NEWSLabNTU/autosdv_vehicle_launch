@@ -16,10 +16,10 @@ imported only on the real path, so the package imports on a laptop.
 """
 from typing import Callable
 
-HARDWARE_REAL = "real"
-HARDWARE_SIM = "sim"
-PWM_TOPIC = "/rc_sim/pwm"
-EDGE_TOPIC = "/rc_sim/hall_edges"
+HARDWARE_REAL = 'real'
+HARDWARE_SIM = 'sim'
+PWM_TOPIC = '/rc_sim/pwm'
+EDGE_TOPIC = '/rc_sim/hall_edges'
 
 
 def check_hardware(value: str) -> str:
@@ -47,9 +47,9 @@ class SimPCA9685:
 class SimGPIO:
     """Stand-in for the ``Jetson.GPIO`` module: the three calls velocity_report makes."""
 
-    BOARD = "BOARD"
-    IN = "IN"
-    RISING = "RISING"
+    BOARD = 'BOARD'
+    IN = 'IN'
+    RISING = 'RISING'
 
     def __init__(self, node, topic: str = EDGE_TOPIC):
         self._node = node
@@ -77,7 +77,7 @@ class SimGPIO:
 
 def make_pwm_driver(params: dict, node=None, pca_class=None):
     """Return the PWM driver for ``params["hardware"]`` (dry runs are the caller's business)."""
-    hardware = check_hardware(params.get("hardware", HARDWARE_REAL))
+    hardware = check_hardware(params.get('hardware', HARDWARE_REAL))
     if hardware == HARDWARE_SIM:
         from rclpy.qos import QoSProfile, ReliabilityPolicy
         from std_msgs.msg import Int32MultiArray
@@ -91,8 +91,8 @@ def make_pwm_driver(params: dict, node=None, pca_class=None):
     else:
         if pca_class is None:
             from Adafruit_PCA9685 import PCA9685 as pca_class
-        driver = pca_class(address=params["i2c_address"], busnum=params["i2c_busnum"])
-    driver.set_pwm_freq(params["pwm_freq"])
+        driver = pca_class(address=params['i2c_address'], busnum=params['i2c_busnum'])
+    driver.set_pwm_freq(params['pwm_freq'])
     return driver
 
 

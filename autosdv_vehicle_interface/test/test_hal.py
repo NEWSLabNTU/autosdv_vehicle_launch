@@ -20,6 +20,7 @@ from autosdv_vehicle_interface import hal
 
 
 class FakePub:
+
     def __init__(self, topic):
         self.topic = topic
         self.sent = []
@@ -29,6 +30,7 @@ class FakePub:
 
 
 class FakeNode:
+
     def __init__(self):
         self.pubs = []
         self.subs = []
@@ -44,10 +46,10 @@ class FakeNode:
 
 
 def test_check_hardware():
-    assert hal.check_hardware("real") == "real"
-    assert hal.check_hardware("sim") == "sim"
-    with pytest.raises(ValueError, match="hardware"):
-        hal.check_hardware("simulation")
+    assert hal.check_hardware('real') == 'real'
+    assert hal.check_hardware('sim') == 'sim'
+    with pytest.raises(ValueError, match='hardware'):
+        hal.check_hardware('simulation')
 
 
 def test_sim_pca9685_forwards_each_write():
@@ -61,15 +63,15 @@ def test_sim_pca9685_forwards_each_write():
 
 
 def test_make_pwm_driver_real_uses_the_given_class(fake_pca):
-    params = {"hardware": "real", "i2c_address": 64, "i2c_busnum": 7, "pwm_freq": 60}
+    params = {'hardware': 'real', 'i2c_address': 64, 'i2c_busnum': 7, 'pwm_freq': 60}
     drv = hal.make_pwm_driver(params, pca_class=fake_pca)
     assert (drv.address, drv.busnum, drv.freq) == (64, 7, 60)
 
 
 def test_make_pwm_driver_sim_publishes_on_the_pwm_topic():
-    pytest.importorskip("std_msgs")
+    pytest.importorskip('std_msgs')
     node = FakeNode()
-    params = {"hardware": "sim", "i2c_address": 64, "i2c_busnum": 7, "pwm_freq": 60}
+    params = {'hardware': 'sim', 'i2c_address': 64, 'i2c_busnum': 7, 'pwm_freq': 60}
     drv = hal.make_pwm_driver(params, node=node)
     drv.set_pwm(0, 0, 400)
     assert isinstance(drv, hal.SimPCA9685)
@@ -78,14 +80,15 @@ def test_make_pwm_driver_sim_publishes_on_the_pwm_topic():
 
 
 def test_sim_gpio_delivers_every_edge_with_its_stamp():
-    pytest.importorskip("std_msgs")
+    pytest.importorskip('std_msgs')
     from std_msgs.msg import Int64MultiArray
     node = FakeNode()
-    gpio = hal.make_gpio("sim", node=node)
+    gpio = hal.make_gpio('sim', node=node)
     got = []
     gpio.setmode(gpio.BOARD)
     gpio.setup(15, gpio.IN)
-    gpio.add_event_detect(15, gpio.RISING, callback=lambda ch, stamp_ns: got.append((ch, stamp_ns)))
+    gpio.add_event_detect(15, gpio.RISING,
+                          callback=lambda ch, stamp_ns: got.append((ch, stamp_ns)))
     topic, callback = node.subs[0]
     assert topic == hal.EDGE_TOPIC
     callback(Int64MultiArray(data=[1_000, 2_500]))
@@ -93,8 +96,8 @@ def test_sim_gpio_delivers_every_edge_with_its_stamp():
 
 
 def test_real_gpio_is_imported_only_when_asked(monkeypatch):
-    monkeypatch.setitem(sys.modules, "Jetson", None)       # no Jetson.GPIO on this machine
-    monkeypatch.delitem(sys.modules, "Jetson.GPIO", raising=False)
+    monkeypatch.setitem(sys.modules, 'Jetson', None)       # no Jetson.GPIO on this machine
+    monkeypatch.delitem(sys.modules, 'Jetson.GPIO', raising=False)
     with pytest.raises(ImportError):
-        hal.make_gpio("real")
-    assert isinstance(hal.make_gpio("sim", node=FakeNode()), hal.SimGPIO)
+        hal.make_gpio('real')
+    assert isinstance(hal.make_gpio('sim', node=FakeNode()), hal.SimGPIO)

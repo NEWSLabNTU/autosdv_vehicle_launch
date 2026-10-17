@@ -74,7 +74,7 @@ class AutoSdvActuator(Node):
 
         # Under use_sim_time every time this node uses comes from the ROS clock
         # (the simulator's /clock); otherwise wall time, exactly as before.
-        self._use_ros_clock = bool(self.get_parameter("use_sim_time").value)
+        self._use_ros_clock = bool(self.get_parameter('use_sim_time').value)
 
         # Speed controller and the ROS-free core (config, state, watchdogs)
         self.initialize_pid_controllers(parameter_values)
@@ -114,7 +114,7 @@ class AutoSdvActuator(Node):
         self.declare_parameter("dry_run", Parameter.Type.BOOL)
 
         # PWM backend: real (PCA9685 over I2C) or sim (the rc_sim plant)
-        self.declare_parameter("hardware", "real")
+        self.declare_parameter('hardware', 'real')
 
         # Longitudinal control parameters
         self.declare_parameter("kp_speed", Parameter.Type.DOUBLE)
@@ -159,20 +159,21 @@ class AutoSdvActuator(Node):
         self.declare_parameter("pwm_output_alpha", Parameter.Type.DOUBLE)
 
         # Speed controller plug-in (see speed_controller.py)
-        self.declare_parameter("speed_controller_class", DEFAULTS["speed_controller_class"])
-        self.declare_parameter("speed_controller_params", DEFAULTS["speed_controller_params"])
-        self.declare_parameter("speed_controller_dt_source", DEFAULTS["speed_controller_dt_source"])
-        self.declare_parameter("controller_fault_holdoff", DEFAULTS["controller_fault_holdoff"])
-        self.declare_parameter("controller_max_faults", DEFAULTS["controller_max_faults"])
+        self.declare_parameter('speed_controller_class', DEFAULTS['speed_controller_class'])
+        self.declare_parameter('speed_controller_params', DEFAULTS['speed_controller_params'])
+        self.declare_parameter('speed_controller_dt_source',
+                               DEFAULTS['speed_controller_dt_source'])
+        self.declare_parameter('controller_fault_holdoff', DEFAULTS['controller_fault_holdoff'])
+        self.declare_parameter('controller_max_faults', DEFAULTS['controller_max_faults'])
 
         # Safety: watchdogs, emergency inputs, override behaviour
-        self.declare_parameter("control_cmd_timeout", DEFAULTS["control_cmd_timeout"])
-        self.declare_parameter("control_cmd_max_stamp_age", DEFAULTS["control_cmd_max_stamp_age"])
-        self.declare_parameter("velocity_timeout", DEFAULTS["velocity_timeout"])
-        self.declare_parameter("override_brake_duration", DEFAULTS["override_brake_duration"])
-        self.declare_parameter("enable_emergency_input", DEFAULTS["enable_emergency_input"])
-        self.declare_parameter("emergency_stop_on_any_mrm", DEFAULTS["emergency_stop_on_any_mrm"])
-        self.declare_parameter("neutral_write_timeout", DEFAULTS["neutral_write_timeout"])
+        self.declare_parameter('control_cmd_timeout', DEFAULTS['control_cmd_timeout'])
+        self.declare_parameter('control_cmd_max_stamp_age', DEFAULTS['control_cmd_max_stamp_age'])
+        self.declare_parameter('velocity_timeout', DEFAULTS['velocity_timeout'])
+        self.declare_parameter('override_brake_duration', DEFAULTS['override_brake_duration'])
+        self.declare_parameter('enable_emergency_input', DEFAULTS['enable_emergency_input'])
+        self.declare_parameter('emergency_stop_on_any_mrm', DEFAULTS['emergency_stop_on_any_mrm'])
+        self.declare_parameter('neutral_write_timeout', DEFAULTS['neutral_write_timeout'])
 
     def get_all_parameter_values(self):
         """
@@ -211,7 +212,7 @@ class AutoSdvActuator(Node):
             .bool_value
         )
 
-        params["hardware"] = check_hardware(self.get_parameter("hardware").value)
+        params['hardware'] = check_hardware(self.get_parameter('hardware').value)
 
         # PWM parameters
         params["min_pwm"] = (
@@ -341,7 +342,7 @@ class AutoSdvActuator(Node):
             params: Dictionary with parameter values
         """
         controller_params = build_controller_params(
-            params, self.parse_speed_controller_params(params["speed_controller_params"]))
+            params, self.parse_speed_controller_params(params['speed_controller_params']))
         controller_params.update(self.nested_speed_controller_params())
 
         controller_class = params["speed_controller_class"] or DEFAULT_SPEED_CONTROLLER
@@ -470,8 +471,8 @@ class AutoSdvActuator(Node):
 
         try:
             driver = make_pwm_driver(params, node=self, pca_class=PCA9685)
-            if params["hardware"] == HARDWARE_SIM:
-                self.get_logger().info("Simulated PCA9685: PWM goes to the rc_sim plant")
+            if params['hardware'] == HARDWARE_SIM:
+                self.get_logger().info('Simulated PCA9685: PWM goes to the rc_sim plant')
             else:
                 self.get_logger().info(
                     f"PCA9685 initialized successfully on I2C bus {params['i2c_busnum']}, "
@@ -479,7 +480,9 @@ class AutoSdvActuator(Node):
             return driver
         except Exception as e:
             self.get_logger().error(f"Failed to initialize PCA9685: {e}")
-            self.get_logger().error("Motor control will not work! Check I2C connections.")
+            self.get_logger().error(
+                'Motor DISABLED: no PWM will be written, the vehicle will not move. '
+                'Check the I2C connections and that Adafruit_PCA9685 is installed.')
             return None
 
     def setup_subscriptions(self):

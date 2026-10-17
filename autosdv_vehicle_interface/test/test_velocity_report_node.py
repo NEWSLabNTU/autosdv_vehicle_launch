@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""velocity_report with hardware:=sim: the node and a bare VelocityEstimator agree on the same edges.
+"""velocity_report with hardware:=sim: the node and a bare VelocityEstimator agree on edges.
 
 Needs rclpy (skipped without). Run under ROS_DOMAIN_ID=73 and flock tmp/bench.lock.
 """
@@ -21,8 +21,8 @@ import time
 
 import pytest
 
-os.environ.setdefault("ROS_DOMAIN_ID", "73")
-rclpy = pytest.importorskip("rclpy")
+os.environ.setdefault('ROS_DOMAIN_ID', '73')
+rclpy = pytest.importorskip('rclpy')
 
 # Imported plainly, not skipped: before Step 6 this import is the red phase on
 # any machine without Jetson.GPIO
@@ -34,11 +34,11 @@ from std_msgs.msg import Int64MultiArray  # noqa: E402
 from autosdv_vehicle_interface.hal import EDGE_TOPIC  # noqa: E402
 from autosdv_vehicle_interface.velocity_estimator import VelocityEstimator  # noqa: E402
 
-PARAMS = {"pin": 15, "rate": 20.0, "wheel_diameter": 10.5, "markers_per_rotation": 12,
-          "frame_id": "base_link", "hardware": "sim"}
+PARAMS = {'pin': 15, 'rate': 20.0, 'wheel_diameter': 10.5, 'markers_per_rotation': 12,
+          'frame_id': 'base_link', 'hardware': 'sim'}
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope='module')
 def ros():
     rclpy.init()
     yield
@@ -57,7 +57,7 @@ def spin_until(node, predicate, timeout=10.0):
 def test_sim_edges_give_the_estimators_value(ros):
     node = velocity_report.AutoSdvVelocityReportNode(
         parameter_overrides=[Parameter(k, value=v) for k, v in PARAMS.items()])
-    pub_node = rclpy.create_node("rc_sim_edge_pub")
+    pub_node = rclpy.create_node('rc_sim_edge_pub')
     pub = pub_node.create_publisher(Int64MultiArray, EDGE_TOPIC, 100)
     try:
         assert spin_until(node, lambda: pub.get_subscription_count() > 0)
@@ -84,13 +84,13 @@ def test_sim_edges_give_the_estimators_value(ros):
 def test_imports_without_jetson_gpio(ros, monkeypatch):
     """The module imports with Jetson.GPIO unavailable, and hardware:=sim selects SimGPIO."""
     import importlib
-    monkeypatch.setitem(sys.modules, "Jetson", None)       # importing Jetson.GPIO now raises
-    monkeypatch.delitem(sys.modules, "Jetson.GPIO", raising=False)
+    monkeypatch.setitem(sys.modules, 'Jetson', None)       # importing Jetson.GPIO now raises
+    monkeypatch.delitem(sys.modules, 'Jetson.GPIO', raising=False)
     module = importlib.reload(velocity_report)
-    assert module.AutoSdvVelocityReportNode.__name__ == "AutoSdvVelocityReportNode"
-    assert "Jetson.GPIO" not in sys.modules
-    node = rclpy.create_node("rc_sim_gpio_probe")
+    assert module.AutoSdvVelocityReportNode.__name__ == 'AutoSdvVelocityReportNode'
+    assert 'Jetson.GPIO' not in sys.modules
+    node = rclpy.create_node('rc_sim_gpio_probe')
     try:
-        assert isinstance(module.make_gpio("sim", node=node), hal.SimGPIO)
+        assert isinstance(module.make_gpio('sim', node=node), hal.SimGPIO)
     finally:
         node.destroy_node()

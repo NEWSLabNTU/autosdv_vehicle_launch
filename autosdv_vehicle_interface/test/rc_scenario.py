@@ -27,11 +27,11 @@ def events():
     out = []
     for k in range(TICKS):
         if k == 540:
-            out.append((k, "gate", (True,)))
+            out.append((k, 'gate', (True,)))
         if k == 560:
-            out.append((k, "gate", (False,)))
+            out.append((k, 'gate', (False,)))
         if k % 5 == 0 and not 380 <= k < 440:                  # velocity reports, with an outage
-            out.append((k, "vel", (min(2.0, 0.01 * k),)))
+            out.append((k, 'vel', (min(2.0, 0.01 * k),)))
         if k % 3 == 0 and not 450 <= k < 520:                  # commands, with a gap
             if k < 150:
                 target = 1.5
@@ -42,6 +42,6 @@ def events():
             else:
                 target = 0.0
             angle = 0.5 if 100 <= k < 200 else (-0.2 if 200 <= k < 300 else 0.0)
-            out.append((k, "cmd", (target, angle)))
-        out.append((k, "tick", ()))
+            out.append((k, 'cmd', (target, angle)))
+        out.append((k, 'tick', ()))
     return out

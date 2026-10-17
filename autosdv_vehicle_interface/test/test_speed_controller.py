@@ -151,9 +151,9 @@ def test_max_pwm_offset_capped_at_the_actuator_clamp():
     assert c.update(20.0, 0.0, 0.01) == 470
 
 
-@pytest.mark.parametrize("bad", [0, -5])
+@pytest.mark.parametrize('bad', [0, -5])
 def test_max_pwm_offset_must_be_positive(bad):
-    with pytest.raises(ValueError, match="max_pwm_offset"):
+    with pytest.raises(ValueError, match='max_pwm_offset'):
         AckermannSpeedPID(dict(PARAMS, max_pwm_offset=bad))
 
 

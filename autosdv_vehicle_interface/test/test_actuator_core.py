@@ -23,16 +23,16 @@ from autosdv_vehicle_interface.speed_controller import load_speed_controller
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PKG = os.path.dirname(HERE)
-ACTUATOR_YAML = os.path.join(PKG, "params", "actuator.yaml")
+ACTUATOR_YAML = os.path.join(PKG, 'params', 'actuator.yaml')
 VEHICLE_INFO_YAML = os.path.join(
-    PKG, "..", "autosdv_vehicle_description", "config", "vehicle_info.param.yaml")
+    PKG, '..', 'autosdv_vehicle_description', 'config', 'vehicle_info.param.yaml')
 
 
 def file_params(**overrides):
     raw = {}
     for path in (ACTUATOR_YAML, VEHICLE_INFO_YAML):
         with open(path) as f:
-            raw.update(yaml.safe_load(f)["/**"]["ros__parameters"])
+            raw.update(yaml.safe_load(f)['/**']['ros__parameters'])
     raw.update(overrides)
     return normalize_params(raw)
 
@@ -45,9 +45,9 @@ def make_core(**overrides):
 
 def test_normalize_renames_vehicle_info_keys_and_fills_defaults():
     p = file_params()
-    assert p["wheelbase"] == 0.319 and p["track_width"] == 0.263
-    assert p["max_steering_angle"] == 0.349
-    assert p["control_cmd_timeout"] == 0.3 and p["speed_controller_dt_source"] == "velocity_report"
+    assert p['wheelbase'] == 0.319 and p['track_width'] == 0.263
+    assert p['max_steering_angle'] == 0.349
+    assert p['control_cmd_timeout'] == 0.3 and p['speed_controller_dt_source'] == 'velocity_report'
 
 
 def test_waiting_until_both_inputs_arrive():
@@ -57,7 +57,7 @@ def test_waiting_until_both_inputs_arrive():
 
 
 def test_drives_forward_then_brakes_on_a_stop_command():
-    core = make_core(speed_controller_dt_source="loop")
+    core = make_core(speed_controller_dt_source='loop')
     t = 0.0
     for k in range(50):
         t = 0.01 * k
@@ -75,8 +75,8 @@ def test_command_timeout_brakes_then_neutral_and_centres_steering():
     core = make_core()
     core.on_velocity(0.0, 0.0, 1.0)
     core.on_command(0.0, 1.0, 0.1)
-    assert core.tick(0.5, 0.5) == (340, 489)        # 0.5 s > control_cmd_timeout 0.3: brake, centred
-    assert core.longitudinal.override_reason == "command_timeout"
+    assert core.tick(0.5, 0.5) == (340, 489)   # 0.5 s > control_cmd_timeout 0.3: brake, centred
+    assert core.longitudinal.override_reason == 'command_timeout'
 
 
 def test_gate_emergency_overrides_the_controller():
@@ -85,7 +85,7 @@ def test_gate_emergency_overrides_the_controller():
     core.on_command(0.0, 2.0, 0.0)
     core.gate_emergency = True
     assert core.tick(0.01, 0.01)[0] == 340
-    assert core.longitudinal.override_reason == "emergency"
+    assert core.longitudinal.override_reason == 'emergency'
 
 
 def test_steering_clamps_to_the_lock_and_maps_through_the_ratio():

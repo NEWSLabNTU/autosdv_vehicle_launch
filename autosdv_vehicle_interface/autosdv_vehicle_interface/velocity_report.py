@@ -25,36 +25,36 @@ class AutoSdvVelocityReportNode(Node):
     """Publish VelocityReport messages from hall-sensor edge timing."""
 
     def __init__(self, **kwargs) -> None:
-        super().__init__("autosdv_velocity_report_node", **kwargs)
+        super().__init__('autosdv_velocity_report_node', **kwargs)
 
         self.declare_parameter("pin", Parameter.Type.INTEGER)
         self.declare_parameter("rate", Parameter.Type.DOUBLE)
         self.declare_parameter("wheel_diameter", Parameter.Type.DOUBLE)
         self.declare_parameter("markers_per_rotation", Parameter.Type.INTEGER)
         self.declare_parameter("frame_id", Parameter.Type.STRING)
-        self.declare_parameter("hardware", HARDWARE_REAL)
+        self.declare_parameter('hardware', HARDWARE_REAL)
 
-        self.publisher = self.create_publisher(VelocityReport, "~/output/velocity_status", 1)
+        self.publisher = self.create_publisher(VelocityReport, '~/output/velocity_status', 1)
 
-        wheel_diameter_cm = self.get_parameter("wheel_diameter").get_parameter_value().double_value
+        wheel_diameter_cm = self.get_parameter('wheel_diameter').get_parameter_value().double_value
         wheel_circumference_meters = wheel_diameter_cm / 100.0 * math.pi
         self.wheel_circumference_meters = wheel_circumference_meters
         self.markers_per_rotation = (
-            self.get_parameter("markers_per_rotation").get_parameter_value().integer_value
+            self.get_parameter('markers_per_rotation').get_parameter_value().integer_value
         )
-        self.frame_id = self.get_parameter("frame_id").get_parameter_value().string_value
+        self.frame_id = self.get_parameter('frame_id').get_parameter_value().string_value
         self.distance_per_marker = wheel_circumference_meters / self.markers_per_rotation
         self.estimator = VelocityEstimator(self.distance_per_marker)
         self.clock = self.get_clock()
 
         # The hall sensor: Jetson.GPIO on the car, the rc_sim plant's edges in simulation
-        self.pin = self.get_parameter("pin").get_parameter_value().integer_value
-        self.gpio = make_gpio(self.get_parameter("hardware").value, node=self)
+        self.pin = self.get_parameter('pin').get_parameter_value().integer_value
+        self.gpio = make_gpio(self.get_parameter('hardware').value, node=self)
         self.gpio.setmode(self.gpio.BOARD)
         self.gpio.setup(self.pin, self.gpio.IN)
         self.gpio.add_event_detect(self.pin, self.gpio.RISING, callback=self.on_gpio_rising)
 
-        rate = self.get_parameter("rate").get_parameter_value().double_value
+        rate = self.get_parameter('rate').get_parameter_value().double_value
         self.timer = self.create_timer(1.0 / rate, self.publish_callback)
 
     def publish_callback(self) -> None:

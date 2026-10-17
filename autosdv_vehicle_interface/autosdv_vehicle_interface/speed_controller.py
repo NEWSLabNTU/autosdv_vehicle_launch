@@ -216,16 +216,16 @@ class AckermannSpeedPID(SpeedPID):
 
     def __init__(self, params: Dict[str, Any]):
         super().__init__(params)
-        init_pwm = int(params["init_pwm"])
-        max_pwm = int(params["max_pwm"])
-        min_pwm = int(params["min_pwm"])
-        if params.get("max_pwm_offset") is None:
+        init_pwm = int(params['init_pwm'])
+        max_pwm = int(params['max_pwm'])
+        min_pwm = int(params['min_pwm'])
+        if params.get('max_pwm_offset') is None:
             # Unset: the limit this controller has always had, unchanged
             max_pwm_offset = (max_pwm - min_pwm) // 2
         else:
-            max_pwm_offset = int(params["max_pwm_offset"])
+            max_pwm_offset = int(params['max_pwm_offset'])
             if max_pwm_offset <= 0:
-                raise ValueError(f"max_pwm_offset must be positive, got {max_pwm_offset}")
+                raise ValueError(f'max_pwm_offset must be positive, got {max_pwm_offset}')
             # The shell clamps to max_pwm anyway; a larger limit only winds up
             max_pwm_offset = min(max_pwm_offset, max_pwm - init_pwm)
         self.max_pwm_offset = max_pwm_offset

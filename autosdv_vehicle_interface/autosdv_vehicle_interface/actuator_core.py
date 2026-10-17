@@ -27,37 +27,37 @@ from autosdv_vehicle_interface.speed_controller import DEFAULT_SPEED_CONTROLLER
 # Parameters the node declares with a default; the others come from
 # actuator.yaml and vehicle_info.param.yaml and have none.
 DEFAULTS: Dict[str, Any] = {
-    "speed_controller_class": DEFAULT_SPEED_CONTROLLER,
-    "speed_controller_params": "",
-    "speed_controller_dt_source": "velocity_report",
-    "controller_fault_holdoff": 1.0,
-    "controller_max_faults": 3,
-    "control_cmd_timeout": 0.3,
-    "control_cmd_max_stamp_age": 0.5,
-    "velocity_timeout": 0.5,
-    "override_brake_duration": 1.5,
-    "enable_emergency_input": True,
-    "emergency_stop_on_any_mrm": False,
-    "neutral_write_timeout": 0.5,
+    'speed_controller_class': DEFAULT_SPEED_CONTROLLER,
+    'speed_controller_params': '',
+    'speed_controller_dt_source': 'velocity_report',
+    'controller_fault_holdoff': 1.0,
+    'controller_max_faults': 3,
+    'control_cmd_timeout': 0.3,
+    'control_cmd_max_stamp_age': 0.5,
+    'velocity_timeout': 0.5,
+    'override_brake_duration': 1.5,
+    'enable_emergency_input': True,
+    'emergency_stop_on_any_mrm': False,
+    'neutral_write_timeout': 0.5,
 }
 
 # vehicle_info.param.yaml's names -> the names this code uses
 FILE_KEY_RENAMES = {
-    "max_steer_angle": "max_steering_angle",
-    "wheel_base": "wheelbase",
-    "wheel_tread": "track_width",
+    'max_steer_angle': 'max_steering_angle',
+    'wheel_base': 'wheelbase',
+    'wheel_tread': 'track_width',
 }
 
 # Actuator parameters every speed controller receives in its params dict
 SPEED_CONTROLLER_BASE_PARAMS = (
-    "init_pwm", "min_pwm", "max_pwm", "brake_pwm", "rate",
-    "kp_speed", "ki_speed", "kd_speed", "integral_limit",
-    "enable_conditional_integration", "derivative_filter_alpha",
+    'init_pwm', 'min_pwm', 'max_pwm', 'brake_pwm', 'rate',
+    'kp_speed', 'ki_speed', 'kd_speed', 'integral_limit',
+    'enable_conditional_integration', 'derivative_filter_alpha',
 )
 
 
 def normalize_params(raw: Dict[str, Any]) -> Dict[str, Any]:
-    """Merged parameter files -> the dict the node builds from its parameters."""
+    """Turn merged parameter files into the dict the node builds from its parameters."""
     params = dict(DEFAULTS)
     for key, value in raw.items():
         params[FILE_KEY_RENAMES.get(key, key)] = value
@@ -66,7 +66,7 @@ def normalize_params(raw: Dict[str, Any]) -> Dict[str, Any]:
 
 def build_controller_params(params: Dict[str, Any],
                             overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """The speed controller's params: the actuator's base set, overrides winning."""
+    """Build the speed controller's params: the actuator's base set, overrides winning."""
     controller_params = {name: params[name] for name in SPEED_CONTROLLER_BASE_PARAMS}
     controller_params.update(overrides or {})
     return controller_params
@@ -150,34 +150,34 @@ class Config:
 
 def make_config(params: Dict[str, Any]) -> Config:
     return Config(
-        min_pwm=params["min_pwm"],
-        init_pwm=params["init_pwm"],
-        max_pwm=params["max_pwm"],
-        brake_pwm=params["brake_pwm"],
-        min_steer=params["min_steer"],
-        init_steer=params["init_steer"],
-        max_steer=params["max_steer"],
-        tire_angle_to_steer_ratio=params["tire_angle_to_steer_ratio"],
-        steering_speed=params["steering_speed"],
-        max_steering_angle=params["max_steering_angle"],
-        wheelbase=params["wheelbase"],
-        track_width=params["track_width"],
+        min_pwm=params['min_pwm'],
+        init_pwm=params['init_pwm'],
+        max_pwm=params['max_pwm'],
+        brake_pwm=params['brake_pwm'],
+        min_steer=params['min_steer'],
+        init_steer=params['init_steer'],
+        max_steer=params['max_steer'],
+        tire_angle_to_steer_ratio=params['tire_angle_to_steer_ratio'],
+        steering_speed=params['steering_speed'],
+        max_steering_angle=params['max_steering_angle'],
+        wheelbase=params['wheelbase'],
+        track_width=params['track_width'],
     )
 
 
 def make_shell_config(params: Dict[str, Any]) -> ShellConfig:
     return ShellConfig(
-        init_pwm=params["init_pwm"],
-        min_pwm=params["min_pwm"],
-        max_pwm=params["max_pwm"],
-        brake_pwm=params["brake_pwm"],
-        full_stop_threshold=params["full_stop_threshold"],
-        brake_threshold=params["brake_threshold"],
-        velocity_deadband=params["velocity_deadband"],
-        override_brake_duration=params["override_brake_duration"],
-        controller_fault_holdoff=params["controller_fault_holdoff"],
-        controller_max_faults=params["controller_max_faults"],
-        dt_source=params["speed_controller_dt_source"],
+        init_pwm=params['init_pwm'],
+        min_pwm=params['min_pwm'],
+        max_pwm=params['max_pwm'],
+        brake_pwm=params['brake_pwm'],
+        full_stop_threshold=params['full_stop_threshold'],
+        brake_threshold=params['brake_threshold'],
+        velocity_deadband=params['velocity_deadband'],
+        override_brake_duration=params['override_brake_duration'],
+        controller_fault_holdoff=params['controller_fault_holdoff'],
+        controller_max_faults=params['controller_max_faults'],
+        dt_source=params['speed_controller_dt_source'],
     )
 
 
@@ -188,10 +188,11 @@ class ActuatorCore:
         self.config = make_config(params)
         self.speed_controller = controller
         self.longitudinal = LongitudinalShell(make_shell_config(params), controller, logger=logger)
-        self.cmd_watchdog = InputWatchdog("control command", params["control_cmd_timeout"], logger)
-        self.velocity_watchdog = InputWatchdog("velocity report", params["velocity_timeout"], logger)
-        self.vel_meas_alpha = params["velocity_measurement_filter_alpha"]
-        self.vel_cmd_alpha = params["velocity_command_filter_alpha"]
+        self.cmd_watchdog = InputWatchdog('control command', params['control_cmd_timeout'], logger)
+        self.velocity_watchdog = InputWatchdog(
+            'velocity report', params['velocity_timeout'], logger)
+        self.vel_meas_alpha = params['velocity_measurement_filter_alpha']
+        self.vel_cmd_alpha = params['velocity_command_filter_alpha']
         self.gate_emergency = False
         self.mrm_emergency = False
         self.state = State(
@@ -204,7 +205,7 @@ class ActuatorCore:
         )
 
     def on_velocity(self, now: float, monotonic_now: float, speed: float) -> None:
-        """A velocity report arrived."""
+        """Take a velocity report."""
         self.state.last_speed = (
             self.state.current_speed if self.state.current_speed is not None else 0.0
         )
@@ -213,7 +214,7 @@ class ActuatorCore:
         self.velocity_watchdog.feed(monotonic_now)
 
     def on_command(self, monotonic_now: float, velocity: float, tire_angle: float) -> None:
-        """A usable control command arrived (the node validates stamps and finiteness)."""
+        """Take a usable control command (the node validates stamps and finiteness)."""
         self.cmd_watchdog.feed(monotonic_now)
         self.state.target_speed = velocity
         max_angle = self.config.max_steering_angle
