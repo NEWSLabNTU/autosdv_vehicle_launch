@@ -129,3 +129,34 @@ def test_interface_base_class():
     base.reset()
     with pytest.raises(NotImplementedError):
         base.update(1.0, 0.0, 0.01)
+
+
+def test_max_pwm_offset_unset_keeps_today_s_limit():
+    c = AckermannSpeedPID(dict(PARAMS))
+    assert c.max_pwm_offset == 55
+    assert (c.pid.min_output, c.pid.max_output) == (-55, 55)
+    assert c.update(20.0, 0.0, 0.01) == 425   # saturated: 370 + 55
+    c.reset()
+    assert c.update(-20.0, 5.0, 0.01) == 315
+
+
+def test_max_pwm_offset_100_reaches_full_throttle():
+    c = AckermannSpeedPID(dict(PARAMS, max_pwm_offset=100))
+    assert c.update(20.0, 0.0, 0.01) == 470
+
+
+def test_max_pwm_offset_capped_at_the_actuator_clamp():
+    c = AckermannSpeedPID(dict(PARAMS, max_pwm_offset=150))
+    assert c.max_pwm_offset == 100   # max_pwm - init_pwm
+    assert c.update(20.0, 0.0, 0.01) == 470
+
+
+@pytest.mark.parametrize("bad", [0, -5])
+def test_max_pwm_offset_must_be_positive(bad):
+    with pytest.raises(ValueError, match="max_pwm_offset"):
+        AckermannSpeedPID(dict(PARAMS, max_pwm_offset=bad))
+
+
+def test_max_pwm_offset_through_the_loader():
+    c = load_speed_controller(None, dict(PARAMS, max_pwm_offset=80))
+    assert c.max_pwm_offset == 80

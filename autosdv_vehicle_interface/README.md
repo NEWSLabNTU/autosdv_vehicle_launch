@@ -165,6 +165,10 @@ ros2 launch autosdv_vehicle_launch vehicle_interface.launch.xml \
   always receives: `init_pwm`, `min_pwm`, `max_pwm`, `brake_pwm`, `rate`, and
   the `kp_speed` ... `derivative_filter_alpha` PID settings. Example:
   `speed_controller_params:="{kp: 20.0, ki: 4.0}"`.
+- `max_pwm_offset` (in `speed_controller_params`, optional): the
+  controller's output limit around `init_pwm` [counts]. Unset it is
+  `(max_pwm - min_pwm) // 2` = 55, so the controller tops out at PWM 425;
+  it is capped at `max_pwm - init_pwm` = 100 (PWM 470, full throttle).
 - `measured_speed` is the velocity report after the shell's EMA (alpha 0.3).
   The hall sensor has no direction, so it is never negative on the vehicle.
 - `dt` depends on `speed_controller_dt_source`. `"velocity_report"` (default,

@@ -208,14 +208,29 @@ class AckermannSpeedPID(SpeedPID):
     Reads ``kp_speed``, ``ki_speed``, ``kd_speed``, ``integral_limit``,
     ``enable_conditional_integration``, ``derivative_filter_alpha``,
     ``init_pwm``, ``min_pwm`` and ``max_pwm`` from ``params``.
+
+    ``max_pwm_offset`` (optional) is the output limit around ``init_pwm`` in
+    counts. Unset, it is ``(max_pwm - min_pwm) // 2`` (55 with actuator.yaml),
+    which tops out at PWM 425; set, it is capped at ``max_pwm - init_pwm``.
     """
 
     def __init__(self, params: Dict[str, Any]):
         super().__init__(params)
-        pwm_range = int(params["max_pwm"]) - int(params["min_pwm"])
-        max_pwm_offset = pwm_range // 2
+        init_pwm = int(params["init_pwm"])
+        max_pwm = int(params["max_pwm"])
+        min_pwm = int(params["min_pwm"])
+        if params.get("max_pwm_offset") is None:
+            # Unset: the limit this controller has always had, unchanged
+            max_pwm_offset = (max_pwm - min_pwm) // 2
+        else:
+            max_pwm_offset = int(params["max_pwm_offset"])
+            if max_pwm_offset <= 0:
+                raise ValueError(f"max_pwm_offset must be positive, got {max_pwm_offset}")
+            # The shell clamps to max_pwm anyway; a larger limit only winds up
+            max_pwm_offset = min(max_pwm_offset, max_pwm - init_pwm)
+        self.max_pwm_offset = max_pwm_offset
 
-        self.init_pwm = int(params["init_pwm"])
+        self.init_pwm = init_pwm
         self.pid = AckermannPID(
             kp=params["kp_speed"],
             ki=params["ki_speed"],
