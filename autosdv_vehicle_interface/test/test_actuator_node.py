@@ -241,6 +241,14 @@ def test_speed_controller_params_arrive_as_a_nested_mapping(make_node):
     assert node.speed_controller.params["init_pwm"] == INIT_PWM
 
 
+def test_speed_controller_params_may_arrive_empty(make_node):
+    # what the actuator sees when the launch system parses "{}" as YAML: an
+    # override with no value, which get_parameter() refuses to read
+    node = make_node(speed_controller_params=None)
+    assert node.speed_controller.pid.kp == 12.0
+    assert node.speed_controller.params["init_pwm"] == INIT_PWM
+
+
 def test_speed_controller_params_must_be_a_mapping(make_node):
     with pytest.raises(ValueError):
         make_node(speed_controller_params="[1, 2]")

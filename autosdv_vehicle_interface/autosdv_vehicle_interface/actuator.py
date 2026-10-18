@@ -55,6 +55,7 @@ from autoware_vehicle_msgs.msg import VelocityReport
 import rclpy
 from rclpy import Parameter
 from rclpy.clock import Clock, ClockType
+from rclpy.exceptions import ParameterUninitializedException
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
@@ -356,7 +357,6 @@ class AutoSdvActuator(Node):
         # Speed controller plug-in, safety (declared with defaults)
         for name in (
             "speed_controller_class",
-            "speed_controller_params",
             "speed_controller_dt_source",
             "controller_fault_holdoff",
             "controller_max_faults",
@@ -369,8 +369,21 @@ class AutoSdvActuator(Node):
             "neutral_write_timeout",
         ):
             params[name] = self.get_parameter(name).value
-
+        params["speed_controller_params"] = self._speed_controller_params_text()
         return params
+
+    def _speed_controller_params_text(self):
+        """
+        ``speed_controller_params`` as text, '' when it arrived without a value.
+
+        A launch file handed ``{}`` sees it parsed as an empty YAML mapping, and
+        the node then gets an override with no value, which get_parameter()
+        refuses to read: an empty mapping means no parameters, not a crash.
+        """
+        try:
+            return self.get_parameter("speed_controller_params").value
+        except ParameterUninitializedException:
+            return ""
 
     def initialize_pid_controllers(self, params):
         """
