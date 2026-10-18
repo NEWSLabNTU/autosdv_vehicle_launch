@@ -93,3 +93,80 @@ def test_imports_without_jetson_gpio(ros, monkeypatch):
         assert isinstance(module.make_gpio('sim', node=node), hal.SimGPIO)
     finally:
         node.destroy_node()
+
+
+def test_sim_acknowledges_each_report_after_publishing_it(ros):
+    """hardware:=sim: each report is followed by a lockstep ack for its timer deadline."""
+    from std_msgs.msg import String
+    node = velocity_report.AutoSdvVelocityReportNode(
+        parameter_overrides=[Parameter(k, value=v) for k, v in PARAMS.items()])
+    order = []
+    node.publisher.publish = lambda msg, inner=node.publisher.publish: (
+        order.append(('report', msg.header.stamp.sec * 10**9 + msg.header.stamp.nanosec)),
+        inner(msg))
+    probe = rclpy.create_node('rc_sim_ack_probe')
+    acks = []
+    probe.create_subscription(String, hal.LOCKSTEP_ACK_TOPIC, lambda m: acks.append(m.data), 100)
+    try:
+        assert spin_until(node, lambda: len(order) >= 3)
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and len(acks) < 3:
+            rclpy.spin_once(probe, timeout_sec=0.05)
+        name, deadline_ns, period_ns, extra = hal.parse_ack(acks[0])
+        assert name == hal.VELOCITY_REPORT and period_ns == 50_000_000
+        assert extra == {'late_edges': 0}
+        stamps = [t for _, t in order]
+        # the deadline is the timer's, at or just before the report's stamp
+        assert any(0 <= t - deadline_ns < period_ns for t in stamps)
+        node.on_gpio_rising(15, node.last_report_ns - 1)     # an edge the last report covered
+        assert node.late_edges == 1
+    finally:
+        probe.destroy_node()
+        node.destroy_node()
+
+
+def test_real_hardware_publishes_no_ack(ros, monkeypatch):
+    class FakeGPIO:
+        BOARD, IN, RISING = 'BOARD', 'IN', 'RISING'
+
+        def setmode(self, mode):
+            pass
+
+        def setup(self, pin, direction):
+            pass
+
+        def add_event_detect(self, pin, edge, callback):
+            pass
+
+    monkeypatch.setattr(velocity_report, 'make_gpio', lambda hardware, node=None: FakeGPIO())
+    params = dict(PARAMS, hardware='real')
+    node = velocity_report.AutoSdvVelocityReportNode(
+        parameter_overrides=[Parameter(k, value=v) for k, v in params.items()])
+    try:
+        assert node.lockstep is None
+        assert not [t for t, _ in node.get_publisher_names_and_types_by_node(
+            node.get_name(), node.get_namespace()) if t == hal.LOCKSTEP_ACK_TOPIC]
+    finally:
+        node.destroy_node()
+
+
+def test_sim_report_waits_for_its_edges(ros, monkeypatch):
+    """Under lockstep a report is held until the plant marks the edges complete up to it."""
+    node = velocity_report.AutoSdvVelocityReportNode(
+        parameter_overrides=[Parameter(k, value=v) for k, v in PARAMS.items()])
+    acks, reports = [], []
+    node.lockstep.ack = lambda deadline, period, **extra: acks.append((deadline, extra))
+    node.publisher.publish = lambda msg: reports.append(msg.longitudinal_velocity)
+    monkeypatch.setattr(velocity_report, 'timer_deadline_ns', lambda timer, now: 2_000_000_000)
+    try:
+        node.lockstep.active = True
+        node.gpio.until_ns = 1_995_000_000            # edges in up to 5 ms before the deadline
+        node.publish_callback()
+        assert reports == [] and acks == [] and node._held_report_ns == 2_000_000_000
+        node.gpio.until_ns = 2_000_000_000
+        node._on_edges_until(2_000_000_000)
+        assert len(reports) == 1 and acks == [(2_000_000_000, {'late_edges': 0})]
+        node.publish_callback()                       # edges already complete: no hold
+        assert len(reports) == 2
+    finally:
+        node.destroy_node()

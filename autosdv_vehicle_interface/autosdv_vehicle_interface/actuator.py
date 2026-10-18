@@ -24,7 +24,17 @@ from autosdv_vehicle_interface.actuator_core import (  # noqa: F401  (State, Con
     DEFAULTS,
     State,
 )
-from autosdv_vehicle_interface.hal import check_hardware, HARDWARE_SIM, make_pwm_driver
+from autosdv_vehicle_interface.hal import (
+    ACTUATOR,
+    check_hardware,
+    EMERGENCY,
+    HARDWARE_SIM,
+    make_lockstep_participant,
+    make_pwm_driver,
+    PATH_TRACKER,
+    ReportGate,
+    timer_deadline_ns,
+)
 from autosdv_vehicle_interface.safety import (
     classify_stamp_age,
     mrm_requires_stop,
@@ -44,6 +54,7 @@ from autoware_internal_debug_msgs.msg import Float32MultiArrayStamped
 from autoware_vehicle_msgs.msg import VelocityReport
 import rclpy
 from rclpy import Parameter
+from rclpy.clock import Clock, ClockType
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
@@ -98,6 +109,31 @@ class AutoSdvActuator(Node):
         # Create timer
         publication_period = 1.0 / parameter_values["rate"]
         self.timer = self.create_timer(publication_period, self.timer_callback)
+
+        # Sim only: the plant's clock handshake (hal.py). A tick whose velocity report
+        # has not arrived yet is held until it does, then acknowledged. So is a tick whose
+        # control command has not: when path_tracker takes part (Lab 2 Part 1), the command
+        # stamped with its latest deadline at or before the tick. That second gate is
+        # dropped if no such command comes within command_hold_timeout (wall), e.g. when
+        # vehicle_cmd_gate stops forwarding, and re-armed by the next command. A third gate
+        # does the same for ~/input/emergency when its source takes part (EMERGENCY: Lab 2
+        # Part 1's scenario), so an e-stop lands on the same tick in every run. A gate whose
+        # participant never acknowledges (every other stack) never arms.
+        self._report_gate = ReportGate()
+        self._command_gate = ReportGate(PATH_TRACKER)
+        self._command_gate_armed = False
+        self._emergency_gate = ReportGate(EMERGENCY)
+        self._emergency_gate_armed = False
+        self._held_tick_ns = None
+        self._held_since = None
+        self.command_hold_timeout = 0.5
+        self.lockstep = make_lockstep_participant(
+            parameter_values['hardware'], self, ACTUATOR,
+            [self._report_gate, self._command_gate, self._emergency_gate],
+            self._on_lockstep_status)
+        if self.lockstep is not None:
+            self.create_timer(0.05, self._check_command_hold,
+                              clock=Clock(clock_type=ClockType.STEADY_TIME))
 
         # Debug log
         self.get_logger().info("Ackermann controller initialized")
@@ -554,6 +590,10 @@ class AutoSdvActuator(Node):
             msg: VelocityReport message containing current vehicle speed
         """
         self.core.on_velocity(self._now(), self._monotonic(), msg.longitudinal_velocity)
+        if self.lockstep is not None:
+            self._report_gate.on_report(msg.header.stamp.sec * 1_000_000_000
+                                        + msg.header.stamp.nanosec)
+            self._release_held_tick()
 
     def control_callback(self, msg):
         """
@@ -569,6 +609,22 @@ class AutoSdvActuator(Node):
         Args:
             msg: Control message containing target velocity and steering angle
         """
+        self.apply_control_cmd(msg)
+        if self.lockstep is not None:
+            # After the command is applied, so a tick held for it computes on it (the
+            # release once ran first and the tick used the previous target: the launch
+            # started one tick late in some runs). Counted as arrived even if rejected.
+            stamp_ns = msg.stamp.sec * 1_000_000_000 + msg.stamp.nanosec
+            self._command_gate.on_report(stamp_ns)
+            # (re-)armed only by a command on the tracker's schedule: one vehicle_cmd_gate
+            # makes up itself (its emergency-stop path, on its own timer) must not re-arm a
+            # gate that then waits command_hold_timeout for a tracker command on every tick
+            if self._command_gate.on_schedule(stamp_ns):
+                self._command_gate_armed = True
+            self._release_held_tick()
+
+    def apply_control_cmd(self, msg):
+        """Validate a control command and hand it to the core (control_callback's body)."""
         rejection = self.check_control_cmd(msg)
         if rejection is not None:
             if rejection != self._last_cmd_rejection:
@@ -618,6 +674,13 @@ class AutoSdvActuator(Node):
             else:
                 self.get_logger().info("vehicle_cmd_gate emergency cleared")
         self.gate_emergency = emergency
+        if self.lockstep is not None:
+            # after the state change, as for commands: a tick held for it acts on it
+            stamp_ns = msg.stamp.sec * 1_000_000_000 + msg.stamp.nanosec
+            self._emergency_gate.on_report(stamp_ns)
+            if self._emergency_gate.on_schedule(stamp_ns):
+                self._emergency_gate_armed = True
+            self._release_held_tick()
 
     def mrm_state_callback(self, msg):
         """Track the MRM state (/system/fail_safe/mrm_state)."""
@@ -635,8 +698,79 @@ class AutoSdvActuator(Node):
         """
         Run one control tick at the configured rate.
 
-        Implements the Ackermann control loop similar to CARLA.
+        Implements the Ackermann control loop similar to CARLA. In sim, under the
+        plant's clock handshake, the tick waits for its velocity report first.
         """
+        if self.lockstep is None:
+            self.control_tick()
+            return
+        tick_ns = timer_deadline_ns(self.timer, self.get_clock().now().nanoseconds)
+        if self._held_tick_ns is not None:
+            # superseded: the plant moved on without the report (a lockstep timeout)
+            self.lockstep.ack(self._held_tick_ns, self.timer.timer_period_ns, skipped=1)
+            self._held_tick_ns = None
+        if self.lockstep.active and self._awaiting(tick_ns):
+            self._held_tick_ns = tick_ns
+            self._held_since = time.monotonic()
+            return
+        self._lockstep_tick(tick_ns)
+
+    def _awaiting(self, tick_ns: int) -> bool:
+        """Return True while the tick's report, or an armed gate's message, is missing."""
+        return (self._report_gate.awaiting(tick_ns)
+                or (self._command_gate_armed and self._command_gate.awaiting(tick_ns))
+                or (self._emergency_gate_armed and self._emergency_gate.awaiting(tick_ns)))
+
+    def _release_held_tick(self) -> None:
+        held = self._held_tick_ns
+        if held is not None and not self._awaiting(held):
+            self._held_tick_ns = None
+            self._lockstep_tick(held)
+
+    def _check_command_hold(self) -> None:
+        """Wall-time guard: a command or emergency that does not come must not stall the sim."""
+        held = self._held_tick_ns
+        if held is None or time.monotonic() - self._held_since < self.command_hold_timeout:
+            return
+        if self._command_gate_armed and self._command_gate.awaiting(held):
+            self._command_gate_armed = False
+            self.get_logger().warn(
+                f"lockstep: no control command for path_tracker's deadline within "
+                f'{self.command_hold_timeout} s (wall); not waiting for commands until the next')
+        if self._emergency_gate_armed and self._emergency_gate.awaiting(held):
+            self._emergency_gate_armed = False
+            self.get_logger().warn(
+                'lockstep: no emergency message for its source deadline within '
+                f'{self.command_hold_timeout} s (wall); not waiting for it until the next')
+        self._release_held_tick()
+
+    def _on_lockstep_status(self, active: bool) -> None:
+        """Run a held tick at once when the plant drops lockstep (disabled, or a timeout)."""
+        held = self._held_tick_ns
+        if not active and held is not None:
+            self._held_tick_ns = None
+            self._lockstep_tick(held)
+
+    def _lockstep_tick(self, tick_ns: int) -> None:
+        """Run a control tick, then acknowledge it with the stamp of the report it used."""
+        if self._neutral_written:
+            return      # shutting down: the outputs stay neutral
+        pwm_value, steer_value = self.control_tick()
+        report = self._report_gate.last_report_ns
+        command = self._command_gate.last_report_ns
+        armed = self.lockstep.active and self._report_gate.report_period_ns is not None
+        extra = {'report': -1 if report is None else report, 'gate': int(armed),
+                 'cmd': -1 if command is None else command,
+                 'cgate': int(self.lockstep.active and self._command_gate_armed),
+                 'egate': int(self.lockstep.active and self._emergency_gate_armed)}
+        if not self.dry_run and self.driver is not None:
+            # the values just written: the plant applies them from the ack too, so a PWM
+            # message overtaken by its ack cannot leave the plant on the previous tick's
+            extra.update(pwm=pwm_value, steer=steer_value)
+        self.lockstep.ack(tick_ns, self.timer.timer_period_ns, **extra)
+
+    def control_tick(self):
+        """Compute and write the motor and steering PWM for this tick; return the two values."""
         pwm_value, steer_value = self.core.tick(self._now(), self._monotonic())
         self.publish_mode()
 
@@ -674,6 +808,7 @@ class AutoSdvActuator(Node):
             self.publish_debug_control_values()
             self.publish_debug_pwm_values(pwm_value, steer_value)
             self.publish_debug_pid_values()
+        return pwm_value, steer_value
 
     def reset_controllers(self) -> None:
         """Reset the speed controller to its initial state."""

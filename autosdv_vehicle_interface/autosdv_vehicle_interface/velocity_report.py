@@ -7,12 +7,15 @@ arithmetic is VelocityEstimator's (velocity_estimator.py), shared with the
 rc_sim lockstep grader; this node supplies the edges and the clock.
 
 ``hardware``: ``real`` (Jetson.GPIO, the default) or ``sim`` (SimGPIO: edges
-from the autosdv_rc_sim plant, each carrying its true time).
+from the autosdv_rc_sim plant, each carrying its true time). In sim the node
+also acknowledges each report on the plant's clock handshake (hal.py,
+LockstepParticipant) after publishing it.
 """
 import math
 import sys
 
-from autosdv_vehicle_interface.hal import HARDWARE_REAL, make_gpio
+from autosdv_vehicle_interface.hal import (
+    HARDWARE_REAL, make_gpio, make_lockstep_participant, timer_deadline_ns, VELOCITY_REPORT)
 from autosdv_vehicle_interface.velocity_estimator import VelocityEstimator
 from autoware_vehicle_msgs.msg import VelocityReport
 import rclpy
@@ -56,8 +59,53 @@ class AutoSdvVelocityReportNode(Node):
         rate = self.get_parameter('rate').get_parameter_value().double_value
         self.timer = self.create_timer(1.0 / rate, self.publish_callback)
 
+        # Sim only: the plant's clock handshake. late_edges counts edges that arrived
+        # after a report already covering their time (a race the handshake should prevent).
+        # A report whose edges the plant has not finished sending is held until they arrive.
+        self.lockstep = make_lockstep_participant(
+            self.get_parameter('hardware').value, self, VELOCITY_REPORT,
+            on_status=self._on_lockstep_status)
+        self.last_report_ns = None
+        self.late_edges = 0
+        self._held_report_ns = None
+        if self.lockstep is not None:
+            self.gpio.on_until = self._on_edges_until
+
     def publish_callback(self) -> None:
         """Publish the current estimate (zero once the edges have stopped)."""
+        if self.lockstep is None:
+            self.publish_report()
+            return
+        deadline = timer_deadline_ns(self.timer, self.clock.now().nanoseconds)
+        if self._held_report_ns is not None:
+            # superseded: the plant moved on without the edges (a lockstep timeout)
+            self.lockstep.ack(self._held_report_ns, self.timer.timer_period_ns, skipped=1)
+            self._held_report_ns = None
+        if self.lockstep.active and self.gpio.awaiting_edges(deadline):
+            self._held_report_ns = deadline
+            return
+        self._lockstep_report(deadline)
+
+    def _on_edges_until(self, until_ns: int) -> None:
+        held = self._held_report_ns
+        if held is not None and until_ns >= held:
+            self._held_report_ns = None
+            self._lockstep_report(held)
+
+    def _on_lockstep_status(self, active: bool) -> None:
+        held = self._held_report_ns
+        if not active and held is not None:
+            self._held_report_ns = None
+            self._lockstep_report(held)
+
+    def _lockstep_report(self, deadline_ns: int) -> None:
+        """Publish the report, then acknowledge its deadline."""
+        curr_time = self.publish_report()
+        self.last_report_ns = curr_time.nanoseconds
+        self.lockstep.ack(deadline_ns, self.timer.timer_period_ns, late_edges=self.late_edges)
+
+    def publish_report(self):
+        """Publish the estimate at the current time; return that time."""
         curr_time = self.clock.now()
         msg = VelocityReport()
         msg.header.stamp = curr_time.to_msg()
@@ -66,6 +114,7 @@ class AutoSdvVelocityReportNode(Node):
         msg.lateral_velocity = 0.0
         msg.heading_rate = 0.0
         self.publisher.publish(msg)
+        return curr_time
 
     def on_gpio_rising(self, channel, stamp_ns=None) -> None:
         """
@@ -78,6 +127,8 @@ class AutoSdvVelocityReportNode(Node):
         """
         if stamp_ns is None:
             stamp_ns = self.clock.now().nanoseconds
+        elif self.last_report_ns is not None and stamp_ns <= self.last_report_ns:
+            self.late_edges += 1
         self.estimator.on_edge(stamp_ns)
 
 

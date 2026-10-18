@@ -332,3 +332,174 @@ def test_process_exit_leaves_outputs_neutral(tmp_path, how):
     assert "Outputs set to neutral" in output, output
     if how == "exception":
         assert proc.returncode != 0 and "injected failure" in output
+
+
+# ---------------------------------------------------------------- lockstep (hardware:=sim)
+def stamped_velocity(node, speed, stamp_ns):
+    msg = VelocityReport()
+    msg.longitudinal_velocity = float(speed)
+    msg.header.stamp.sec, msg.header.stamp.nanosec = divmod(stamp_ns, 10**9)
+    node.velocity_callback(msg)
+
+
+@pytest.fixture
+def sim_node(make_node):
+    node = make_node(hardware='sim')
+    acks = []
+    node.lockstep.ack = lambda deadline, period, **extra: acks.append((deadline, extra))
+    return node, acks
+
+
+def test_real_hardware_takes_no_part_in_lockstep(make_node):
+    node = make_node()
+    assert node.lockstep is None
+    tick(node)          # the real path: no ack, no gate
+
+
+def test_sim_tick_is_acknowledged_with_its_report_and_pwm(sim_node):
+    node, acks = sim_node
+    node.timer_callback()
+    assert len(acks) == 1
+    deadline, extra = acks[0]
+    assert extra['report'] == -1            # none received yet
+    assert extra['gate'] == 0               # lockstep not active, schedule unknown
+    assert extra['pwm'] == INIT_PWM and extra['steer'] == INIT_STEER
+
+
+def test_sim_tick_waits_for_the_report_of_its_instant(sim_node, monkeypatch):
+    node, acks = sim_node
+    tick_ns = 7_050_000_000                 # an equal instant: velocity_report is due too
+    monkeypatch.setattr(actuator, 'timer_deadline_ns', lambda timer, now: tick_ns)
+    node.lockstep.active = True
+    node._report_gate.on_ack('velocity_report', 7_000_000_000, 50_000_000)
+    stamped_velocity(node, 0.0, 7_000_000_000)      # the previous report only
+    node.timer_callback()
+    assert acks == [] and node._held_tick_ns == tick_ns     # held, PWM not written
+    stamped_velocity(node, 1.0, 7_050_000_000)
+    assert acks == [(tick_ns, {'report': 7_050_000_000, 'gate': 1, 'pwm': INIT_PWM,
+                               'steer': INIT_STEER, 'cmd': -1, 'cgate': 0,
+                               'egate': 0})]
+    assert node._held_tick_ns is None
+    # the next tick, 10 ms on, has its report already: no hold
+    monkeypatch.setattr(actuator, 'timer_deadline_ns', lambda timer, now: tick_ns + 10_000_000)
+    node.timer_callback()
+    assert len(acks) == 2
+
+
+def test_sim_held_tick_runs_when_lockstep_drops(sim_node):
+    node, acks = sim_node
+    node.lockstep.active = True
+    now = node.get_clock().now().nanoseconds
+    node._report_gate.on_ack('velocity_report', now, 50_000_000)
+    node.timer_callback()
+    assert acks == []
+    node.lockstep.active = False
+    node._on_lockstep_status(False)
+    assert len(acks) == 1 and node._held_tick_ns is None
+
+
+def test_sim_superseded_held_tick_is_acknowledged_as_skipped(sim_node):
+    node, acks = sim_node
+    node.lockstep.active = True
+    node._report_gate.on_ack('velocity_report', node.get_clock().now().nanoseconds, 50_000_000)
+    node.timer_callback()
+    node._held_tick_ns -= 10_000_000        # pretend the clock moved a period on
+    node.lockstep.active = False
+    node.timer_callback()
+    assert [extra.get('skipped') for _, extra in acks] == [1, None]
+
+
+def stamped_control(node, velocity, stamp_ns):
+    msg = Control()
+    msg.longitudinal.velocity = float(velocity)
+    msg.stamp.sec, msg.stamp.nanosec = divmod(stamp_ns, 10**9)
+    node.control_callback(msg)
+
+
+def test_sim_tick_waits_for_the_command_of_its_instant(sim_node, monkeypatch):
+    node, acks = sim_node
+    tick_ns = 7_040_000_000
+    monkeypatch.setattr(actuator, 'timer_deadline_ns', lambda timer, now: tick_ns)
+    node.lockstep.active = True
+    node._command_gate.on_ack('path_tracker', 7_000_000_000, 33_333_333)
+    stamped_control(node, 1.0, 7_000_000_000)              # arms the command gate
+    assert node._command_gate_armed
+    node.timer_callback()                                  # needs the 7.0333 command
+    assert acks == [] and node._held_tick_ns == tick_ns
+    stamped_control(node, 2.0, 7_033_333_333)
+    assert len(acks) == 1 and acks[0][1]['cmd'] == 7_033_333_333 and acks[0][1]['cgate'] == 1
+
+
+def test_sim_missing_command_disarms_the_gate_after_a_wall_timeout(sim_node, monkeypatch):
+    node, acks = sim_node
+    monkeypatch.setattr(actuator, 'timer_deadline_ns', lambda timer, now: 7_040_000_000)
+    node.lockstep.active = True
+    node._command_gate.on_ack('path_tracker', 7_000_000_000, 33_333_333)
+    stamped_control(node, 1.0, 7_000_000_000)
+    node.timer_callback()
+    assert acks == []
+    node._check_command_hold()                             # not yet timed out
+    assert acks == []
+    node._held_since -= 1.0
+    node._check_command_hold()
+    assert len(acks) == 1 and not node._command_gate_armed
+    stamped_control(node, 1.0, 7_100_000_000)              # the next command re-arms it
+    assert node._command_gate_armed
+
+
+def test_sim_tick_held_for_a_command_computes_on_that_command(sim_node, monkeypatch):
+    """The release comes after the command is applied: the held tick drives on it."""
+    node, acks = sim_node
+    tick_ns = node.get_clock().now().nanoseconds
+    monkeypatch.setattr(actuator, 'timer_deadline_ns', lambda timer, now: tick_ns)
+    node.lockstep.active = True
+    node._command_gate.on_ack('path_tracker', tick_ns - 33_333_333, 33_333_333)
+    stamped_control(node, 0.0, tick_ns - 33_333_333)       # arms the gate, target 0
+    velocity(node, 0.0)
+    node.timer_callback()
+    assert acks == []                                      # held for the tick's command
+    stamped_control(node, 2.0, tick_ns)                    # the command of the instant
+    assert len(acks) == 1
+    assert acks[0][1]['pwm'] > INIT_PWM                    # drove on 2.0, not on 0
+
+
+def stamped_emergency(node, emergency, stamp_ns):
+    msg = VehicleEmergencyStamped()
+    msg.emergency = bool(emergency)
+    msg.stamp.sec, msg.stamp.nanosec = divmod(stamp_ns, 10**9)
+    node.emergency_callback(msg)
+
+
+def test_sim_tick_waits_for_the_emergency_of_its_instant(sim_node, monkeypatch):
+    node, acks = sim_node
+    tick_ns = node.get_clock().now().nanoseconds
+    monkeypatch.setattr(actuator, 'timer_deadline_ns', lambda timer, now: tick_ns)
+    node.lockstep.active = True
+    node._emergency_gate.on_ack('emergency', tick_ns - 50_000_000, 50_000_000)
+    stamped_emergency(node, False, tick_ns - 50_000_000)    # arms the gate
+    velocity(node, 3.0)                                     # moving: an e-stop brakes
+    node.timer_callback()
+    assert acks == []                                       # held for the e-stop source
+    stamped_emergency(node, True, tick_ns)                  # raised at this very instant
+    assert len(acks) == 1 and acks[0][1]['egate'] == 1
+    assert acks[0][1]['pwm'] < INIT_PWM                     # braked on it, this tick
+
+
+def test_emergency_gate_never_arms_without_its_participant(sim_node):
+    node, acks = sim_node
+    node.lockstep.active = True
+    stamped_emergency(node, False, node.get_clock().now().nanoseconds)   # vehicle_cmd_gate's
+    assert not node._emergency_gate_armed
+    node.timer_callback()
+    assert len(acks) == 1
+
+
+def test_sim_off_schedule_command_does_not_rearm_the_command_gate(sim_node, monkeypatch):
+    """A command vehicle_cmd_gate makes up (its own stamp) must not re-arm the wait."""
+    node, acks = sim_node
+    node.lockstep.active = True
+    node._command_gate.on_ack('path_tracker', 7_000_000_000, 33_333_333)
+    stamped_control(node, 0.0, 7_015_000_000)               # not on the tracker's schedule
+    assert not node._command_gate_armed
+    stamped_control(node, 0.0, 7_033_333_333)               # the tracker's: arms
+    assert node._command_gate_armed
