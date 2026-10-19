@@ -16,8 +16,10 @@ import json
 import os
 import xml.etree.ElementTree as ET
 
+from autosdv_vehicle_interface import car_profile
 from autosdv_vehicle_interface.motor_plant import HallSpeedSensor, MotorPlant, MotorPlantParams
 from autosdv_vehicle_interface.speed_bench import (
+    actuator_params,
     DEFAULT_ACTUATOR_PARAMS,
     main,
     run_step,
@@ -25,9 +27,7 @@ from autosdv_vehicle_interface.speed_bench import (
 )
 from autosdv_vehicle_interface.speed_controller import load_speed_controller
 import pytest
-import yaml
 
-ACTUATOR_YAML = os.path.join(os.path.dirname(__file__), "..", "params", "actuator.yaml")
 VEHICLE_INTERFACE_LAUNCH = os.path.join(
     os.path.dirname(__file__), "..", "..", "autosdv_vehicle_launch", "launch",
     "vehicle_interface.launch.xml")
@@ -115,14 +115,30 @@ def test_hall_sensor_decays_after_a_sudden_stop():
 
 
 def test_actuator_defaults_match_params_file():
-    with open(ACTUATOR_YAML) as f:
-        params = yaml.safe_load(f)["/**"]["ros__parameters"]
+    # car_a's profile (actuator.yaml under params/cars/car_a), as the actuator sees it
+    params = car_profile.load("car_a")
     # The speed_controller_* defaults live in the launch file, not actuator.yaml.
     launch = ET.parse(VEHICLE_INTERFACE_LAUNCH).getroot()
     params |= {a.get("name"): a.get("default") for a in launch.iter("arg")
                if a.get("name", "").startswith("speed_controller_")}
     for key, value in DEFAULT_ACTUATOR_PARAMS.items():
         assert params[key] == value, key
+
+
+def test_actuator_params_follow_the_car_profile():
+    b = car_profile.load("car_b")
+    p = actuator_params("car_b")
+    assert (p["init_pwm"], p["brake_pwm"]) == (b["init_pwm"], b["brake_pwm"])
+    assert p["init_pwm"] != DEFAULT_ACTUATOR_PARAMS["init_pwm"]
+    with pytest.raises(ValueError):
+        actuator_params("car_z")
+
+
+def test_main_takes_a_car_profile(capsys):
+    assert main(["--car-profile", "car_b", "--duration", "2", "--json"]) == 0
+    assert "final_pwm" in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        main(["--car-profile", "car_z"])
 
 
 def test_bench_default_controller_reaches_target():

@@ -25,32 +25,33 @@ import math
 import sys
 from typing import Any, Dict, List, Optional
 
+from autosdv_vehicle_interface import car_profile
 from autosdv_vehicle_interface.longitudinal import LongitudinalShell, ShellConfig
 from autosdv_vehicle_interface.motor_plant import HallSpeedSensor, MotorPlant, MotorPlantParams
 from autosdv_vehicle_interface.speed_controller import load_speed_controller
 
-# params/actuator.yaml, as far as the speed loop is concerned.
-# test_speed_bench.py fails if these drift from the file.
-DEFAULT_ACTUATOR_PARAMS: Dict[str, Any] = {
-    "rate": 100.0,
-    "init_pwm": 370,
-    "min_pwm": 360,
-    "max_pwm": 470,
-    "brake_pwm": 340,
-    "brake_threshold": 0.2,
-    "kp_speed": 12.0,
-    "ki_speed": 10.0,
-    "kd_speed": 0.001,
-    "integral_limit": 50.0,
-    "enable_conditional_integration": True,
-    "velocity_deadband": 0.0,
-    "full_stop_threshold": 0.1,
-    "derivative_filter_alpha": 0.15,
-    "override_brake_duration": 1.5,
-    "controller_fault_holdoff": 1.0,
-    "controller_max_faults": 3,
-    "speed_controller_dt_source": "velocity_report",
-}
+# The actuator parameters the speed loop reads: actuator.yaml under a car's
+# profile (params/cars/), read through car_profile, never copied here.
+ACTUATOR_KEYS = (
+    "rate", "init_pwm", "min_pwm", "max_pwm", "brake_pwm", "brake_threshold",
+    "kp_speed", "ki_speed", "kd_speed", "integral_limit", "enable_conditional_integration",
+    "velocity_deadband", "full_stop_threshold", "derivative_filter_alpha",
+    "override_brake_duration", "controller_fault_holdoff", "controller_max_faults",
+)
+DEFAULT_CAR_PROFILE = "car_a"
+
+
+def actuator_params(profile: str = DEFAULT_CAR_PROFILE) -> Dict[str, Any]:
+    """Return the speed loop's actuator parameters for one car (car_profile.load(profile))."""
+    p = car_profile.load(profile)
+    out = {k: p[k] for k in ACTUATOR_KEYS}
+    # the launch file's default (vehicle_interface.launch.xml), not actuator.yaml's
+    out["speed_controller_dt_source"] = "velocity_report"
+    return out
+
+
+# car_a's: test_speed_bench.py checks these against the files.
+DEFAULT_ACTUATOR_PARAMS: Dict[str, Any] = actuator_params()
 
 CONTROLLER_PARAM_KEYS = (
     "init_pwm", "min_pwm", "max_pwm", "brake_pwm", "rate", "kp_speed", "ki_speed",
@@ -124,7 +125,7 @@ def run_step(
         target_speed: Step size [m/s].
         duration: Simulated time [s].
         step_time: When the target steps up [s]; zero before it.
-        actuator_params: Actuator parameters; defaults to actuator.yaml's.
+        actuator_params: Actuator parameters; defaults to car_a's (DEFAULT_ACTUATOR_PARAMS).
         plant_params: Plant parameters; defaults to the provisional set.
         report_rate: velocity_report publication rate [Hz].
         substep: Plant integration step [s].
@@ -246,6 +247,8 @@ def main(argv=None) -> int:
                         help="import path pkg.module:Class (default: the actuator's PID)")
     parser.add_argument("--params", type=_mapping, default={},
                         help="speed_controller_params, a YAML mapping")
+    car_profile.add_argument(parser, default=DEFAULT_CAR_PROFILE,
+                             help="the car whose PWM profile the bench runs (default car_a)")
     parser.add_argument("--actuator", type=_mapping, default={},
                         help="actuator parameter overrides, e.g. '{max_pwm: 430}'")
     parser.add_argument("--plant", type=_mapping, default={},
@@ -258,7 +261,7 @@ def main(argv=None) -> int:
     parser.add_argument("--json", action="store_true", help="print metrics as JSON")
     args = parser.parse_args(argv)
 
-    actuator = dict(DEFAULT_ACTUATOR_PARAMS)
+    actuator = actuator_params(args.car_profile)
     actuator.update(args.actuator)
     if args.dt_source:
         actuator["speed_controller_dt_source"] = args.dt_source
