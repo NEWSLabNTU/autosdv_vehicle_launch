@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
   <!-- Arguments -->
-  <arg name="vehicle_id" default="$(env VEHICLE_ID default)"/>
+  <arg name="vehicle_id"
+       description="REQUIRED: which physical car, car_a, car_b or car_c -- an individual_params/config/VEHICLE_ID/ instance. Its autosdv_vehicle/actuator.param.yaml loads last into the actuator and the gear manager, so the car's measured neutral, brake and steering points win over actuator.yaml and actuator_param_overrides; the cars differ in their stop PWM, and the wrong one drives a car instead of stopping it. Autoware's vehicle.launch.xml always passes it."/>
   <arg name="is_simulation" default="false" description="Enable simulation mode (disables PWM output)"/>
   <arg name="hardware" default="real"
        description="real: PCA9685 over I2C and the hall sensor on Jetson.GPIO (the car). sim: the autosdv_rc_sim plant (SimPCA9685 writes to /rc_sim/pwm, SimGPIO reads /rc_sim/hall_edges)"/>
@@ -28,11 +29,8 @@
   <arg name="actuator_param_overrides"
        default="$(find-pkg-share autosdv_vehicle_interface)/params/actuator.yaml"
        description="a param file loaded into the actuator after actuator.yaml, for per-launch overrides such as a measured tire_angle_to_steer_ratio (the Lab 2 waypoint launch). Default: actuator.yaml again, which changes nothing"/>
-  <arg name="car_profile" default=""
-       description="REQUIRED: which physical car, car_a, car_b or car_c. Loads params/cars/CAR_PROFILE.param.yaml last into the actuator and the gear manager, so its measured neutral, brake and steering points win over actuator.yaml and actuator_param_overrides. Unset, the actuator refuses to start: the cars differ in their stop PWM, and the wrong one drives a car instead of stopping it. (Not a parse-time required argument: Autoware's vehicle.launch.xml includes this file and would have to pass it.)"/>
-  <!-- unset: actuator.yaml again (a no-op), and the actuator's own check refuses -->
   <let name="car_param_file"
-       value="$(eval &quot;'$(find-pkg-share autosdv_vehicle_interface)/params/' + ('cars/$(var car_profile).param.yaml' if '$(var car_profile)' else 'actuator.yaml')&quot;)"/>
+       value="$(find-pkg-share individual_params)/config/$(var vehicle_id)/autosdv_vehicle/actuator.param.yaml"/>
 
   <!-- Vehicle Interface -->
   <group if="$(var launch_vehicle_interface)">
@@ -45,7 +43,7 @@
       <param from="$(var vehicle_info_param_file)"/>
       <param from="$(var actuator_param_overrides)"/>
       <param from="$(var car_param_file)"/>
-      <param name="car_profile" value="$(var car_profile)"/>
+      <param name="vehicle_id" value="$(var vehicle_id)"/>
       <!-- Override dry_run parameter based on is_simulation flag -->
       <param name="dry_run" value="$(var is_simulation)"/>
       <param name="hardware" value="$(var hardware)"/>

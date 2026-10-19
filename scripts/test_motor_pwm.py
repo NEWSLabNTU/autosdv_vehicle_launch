@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Direct motor PWM test - set specific PWM value for testing.
-Usage: python3 test_motor_pwm.py --car-profile car_a|car_b|car_c <pwm_value>
+Usage: python3 test_motor_pwm.py --vehicle-id car_a|car_b|car_c <pwm_value>
 """
 
 import time
@@ -47,7 +47,7 @@ if __name__ == '__main__':
     car_profile.add_argument(parser)
     parser.add_argument('pwm_value', type=int)
     args = parser.parse_args()
-    profile = car_profile.load(args.car_profile)
+    profile = car_profile.load(args.vehicle_id)
     pwm = args.pwm_value
     # Normal range: 140 below to 90 above the car's neutral (230-460 on car A).
     lo, hi = profile['init_pwm'] - 140, profile['init_pwm'] + 90

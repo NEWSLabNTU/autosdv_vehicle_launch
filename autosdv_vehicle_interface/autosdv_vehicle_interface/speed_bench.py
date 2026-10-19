@@ -31,19 +31,20 @@ from autosdv_vehicle_interface.motor_plant import HallSpeedSensor, MotorPlant, M
 from autosdv_vehicle_interface.speed_controller import load_speed_controller
 
 # The actuator parameters the speed loop reads: actuator.yaml under a car's
-# profile (params/cars/), read through car_profile, never copied here.
+# instance file (individual_params/config/<vehicle_id>/autosdv_vehicle/), read
+# through car_profile, never copied here.
 ACTUATOR_KEYS = (
     "rate", "init_pwm", "min_pwm", "max_pwm", "brake_pwm", "brake_threshold",
     "kp_speed", "ki_speed", "kd_speed", "integral_limit", "enable_conditional_integration",
     "velocity_deadband", "full_stop_threshold", "derivative_filter_alpha",
     "override_brake_duration", "controller_fault_holdoff", "controller_max_faults",
 )
-DEFAULT_CAR_PROFILE = "car_a"
+DEFAULT_VEHICLE_ID = "car_a"
 
 
-def actuator_params(profile: str = DEFAULT_CAR_PROFILE) -> Dict[str, Any]:
-    """Return the speed loop's actuator parameters for one car (car_profile.load(profile))."""
-    p = car_profile.load(profile)
+def actuator_params(vehicle_id: str = DEFAULT_VEHICLE_ID) -> Dict[str, Any]:
+    """Return the speed loop's actuator parameters for one car (car_profile.load(vehicle_id))."""
+    p = car_profile.load(vehicle_id)
     out = {k: p[k] for k in ACTUATOR_KEYS}
     # the launch file's default (vehicle_interface.launch.xml), not actuator.yaml's
     out["speed_controller_dt_source"] = "velocity_report"
@@ -247,8 +248,8 @@ def main(argv=None) -> int:
                         help="import path pkg.module:Class (default: the actuator's PID)")
     parser.add_argument("--params", type=_mapping, default={},
                         help="speed_controller_params, a YAML mapping")
-    car_profile.add_argument(parser, default=DEFAULT_CAR_PROFILE,
-                             help="the car whose PWM profile the bench runs (default car_a)")
+    car_profile.add_argument(parser, default=DEFAULT_VEHICLE_ID,
+                             help="the car whose PWM points the bench runs (default car_a)")
     parser.add_argument("--actuator", type=_mapping, default={},
                         help="actuator parameter overrides, e.g. '{max_pwm: 430}'")
     parser.add_argument("--plant", type=_mapping, default={},
@@ -261,7 +262,7 @@ def main(argv=None) -> int:
     parser.add_argument("--json", action="store_true", help="print metrics as JSON")
     args = parser.parse_args(argv)
 
-    actuator = actuator_params(args.car_profile)
+    actuator = actuator_params(args.vehicle_id)
     actuator.update(args.actuator)
     if args.dt_source:
         actuator["speed_controller_dt_source"] = args.dt_source

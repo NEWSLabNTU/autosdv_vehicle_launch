@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Direct PWM control script for testing steering center position.
-Usage: python3 test_steering_pwm.py --car-profile car_a|car_b|car_c [pwm_value]
+Usage: python3 test_steering_pwm.py --vehicle-id car_a|car_b|car_c [pwm_value]
 """
 
 import time
@@ -79,7 +79,7 @@ def main(args=None):
     opts, ros_args = parser.parse_known_args(args)
     rclpy.init(args=ros_args)
 
-    controller = DirectPWMController(car_profile.load(opts.car_profile))
+    controller = DirectPWMController(car_profile.load(opts.vehicle_id))
 
     # If PWM value provided as argument, set it directly
     if opts.pwm_value is not None:

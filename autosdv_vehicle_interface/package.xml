@@ -17,6 +17,8 @@
   <depend>autoware_adapi_v1_msgs</depend>
   <depend>tier4_vehicle_msgs</depend>
   <exec_depend>python3-yaml</exec_depend>
+  <!-- the per-car PWM points: config/<vehicle_id>/autosdv_vehicle/actuator.param.yaml -->
+  <exec_depend>individual_params</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

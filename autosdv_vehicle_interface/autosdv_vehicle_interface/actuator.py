@@ -89,13 +89,15 @@ class AutoSdvActuator(Node):
         # The cars differ in their stop PWM (car A 370, car B 395), so the node
         # refuses to guess one: the wrong neutral drives a car instead of
         # stopping it. Raised before any PWM driver exists, so nothing is written.
-        car_profile = self.get_parameter('car_profile').value
-        if not car_profile:
-            msg = ('car_profile is not set: launch with car_profile:=car_a, car_b '
-                   'or car_c (autosdv_vehicle_interface/params/cars/)')
+        vehicle_id = self.get_parameter('vehicle_id').value
+        if not vehicle_id or vehicle_id == 'default':
+            msg = (f'vehicle_id is {vehicle_id!r}, not a car: launch with '
+                   'vehicle_id:=car_a|car_b|car_c (the car\'s PWM points, '
+                   'individual_params/config/<vehicle_id>/autosdv_vehicle/'
+                   'actuator.param.yaml)')
             self.get_logger().fatal(msg)
             raise RuntimeError(msg)
-        self.get_logger().info(f'car profile: {car_profile}')
+        self.get_logger().info(f'vehicle_id: {vehicle_id}')
 
         # Get parameter values
         parameter_values = self.get_all_parameter_values()
@@ -169,8 +171,9 @@ class AutoSdvActuator(Node):
         # PWM backend: real (PCA9685 over I2C) or sim (the rc_sim plant)
         self.declare_parameter('hardware', 'real')
 
-        # Which car's PWM profile the launch loaded (params/cars/)
-        self.declare_parameter('car_profile', '')
+        # Which car the launch loaded the PWM points of
+        # (individual_params/config/<vehicle_id>/autosdv_vehicle/)
+        self.declare_parameter('vehicle_id', '')
 
         # Longitudinal control parameters
         self.declare_parameter("kp_speed", Parameter.Type.DOUBLE)

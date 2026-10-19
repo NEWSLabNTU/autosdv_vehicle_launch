@@ -3,7 +3,7 @@
 Test motor PWM threshold - gradually increase PWM to find when motor starts moving.
 Press Ctrl+C when you see the motor start moving.
 
-Usage: python3 test_motor_threshold.py --car-profile car_a|car_b|car_c
+Usage: python3 test_motor_threshold.py --vehicle-id car_a|car_b|car_c
 """
 
 import time
@@ -64,4 +64,4 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Find the motor movement threshold')
     car_profile.add_argument(parser)
     args = parser.parse_args()
-    test_motor_threshold(car_profile.load(args.car_profile))
+    test_motor_threshold(car_profile.load(args.vehicle_id))

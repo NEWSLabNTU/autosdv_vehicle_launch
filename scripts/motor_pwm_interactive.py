@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Usage: python3 motor_pwm_interactive.py --car-profile car_a|car_b|car_c
+Usage: python3 motor_pwm_interactive.py --vehicle-id car_a|car_b|car_c
 
 Interactive motor PWM control - find the exact stop point and movement thresholds.
 Keys respond immediately without pressing Enter.
@@ -210,7 +210,7 @@ def main():
     parser = argparse.ArgumentParser(description='Interactive motor PWM control')
     car_profile.add_argument(parser)
     args = parser.parse_args()
-    controller = MotorPWMController(car_profile.load(args.car_profile))
+    controller = MotorPWMController(car_profile.load(args.vehicle_id))
     controller.run_interactive()
 
 if __name__ == '__main__':

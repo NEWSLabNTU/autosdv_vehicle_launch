@@ -2,9 +2,10 @@
 """
 Direct motor stop script - ensures motor is stopped safely.
 
-Usage: python3 stop_motor.py --car-profile car_a|car_b|car_c
+Usage: python3 stop_motor.py --vehicle-id car_a|car_b|car_c
 
-The neutral and steering centre are the car's own (params/cars/<car>.param.yaml):
+The neutral and steering centre are the car's own
+(individual_params/config/<vehicle_id>/autosdv_vehicle/actuator.param.yaml):
 car A stops at 370, car B at 395, and 370 on car B is below neutral = brake/reverse.
 """
 
@@ -48,4 +49,4 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
     car_profile.add_argument(parser)
     args = parser.parse_args()
-    stop_motor(car_profile.load(args.car_profile))
+    stop_motor(car_profile.load(args.vehicle_id))

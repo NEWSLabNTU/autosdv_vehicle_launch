@@ -115,7 +115,7 @@ def test_hall_sensor_decays_after_a_sudden_stop():
 
 
 def test_actuator_defaults_match_params_file():
-    # car_a's profile (actuator.yaml under params/cars/car_a), as the actuator sees it
+    # car_a's PWM points (actuator.yaml under individual_params' car_a), as the actuator sees it
     params = car_profile.load("car_a")
     # The speed_controller_* defaults live in the launch file, not actuator.yaml.
     launch = ET.parse(VEHICLE_INTERFACE_LAUNCH).getroot()
@@ -125,7 +125,7 @@ def test_actuator_defaults_match_params_file():
         assert params[key] == value, key
 
 
-def test_actuator_params_follow_the_car_profile():
+def test_actuator_params_follow_the_vehicle_id():
     b = car_profile.load("car_b")
     p = actuator_params("car_b")
     assert (p["init_pwm"], p["brake_pwm"]) == (b["init_pwm"], b["brake_pwm"])
@@ -134,11 +134,11 @@ def test_actuator_params_follow_the_car_profile():
         actuator_params("car_z")
 
 
-def test_main_takes_a_car_profile(capsys):
-    assert main(["--car-profile", "car_b", "--duration", "2", "--json"]) == 0
+def test_main_takes_a_vehicle_id(capsys):
+    assert main(["--vehicle-id", "car_b", "--duration", "2", "--json"]) == 0
     assert "final_pwm" in capsys.readouterr().out
     with pytest.raises(SystemExit):
-        main(["--car-profile", "car_z"])
+        main(["--vehicle-id", "car_z"])
 
 
 def test_bench_default_controller_reaches_target():
