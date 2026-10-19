@@ -77,7 +77,7 @@ REQUIRED = {'init_pwm', 'brake_pwm', 'init_steer', 'min_steer', 'max_steer'}
 # The ESC's measured points (actuator.yaml: 0 = not measured) likewise.
 ESC_POINTS = {'forward_start_pwm', 'forward_hold_pwm', 'reverse_stop_pwm',
               'reverse_start_pwm', 'reverse_arm_pwm'}
-OPTIONAL = {'tire_angle_to_steer_ratio'} | ESC_POINTS
+OPTIONAL = {'tire_angle_to_steer_ratio', 'steer_deadband', 'steer_deadband_min_angle'} | ESC_POINTS
 
 
 @pytest.mark.parametrize('path', CARS, ids=vehicle_id)

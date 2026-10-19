@@ -51,6 +51,9 @@ DEFAULTS: Dict[str, Any] = {
     # set per car in its speed_controller.param.yaml; off unless set
     'esc_deadzone_compensation': False,
     'drive_floor_pwm': 0,
+    # The steering servo's dead band around init_steer, per car (0 = none)
+    'steer_deadband': 0,
+    'steer_deadband_min_angle': 0.01,
 }
 
 # vehicle_info.param.yaml's names -> the names this code uses
@@ -141,6 +144,10 @@ class Config:
         max_steering_angle: Maximum steering angle [rad]
         wheelbase: Distance between front and rear axles [m]
         track_width: Distance between left and right wheels [m]
+        steer_deadband: Counts around init_steer where the servo does not move
+            the wheels; a command outside steer_deadband_min_angle starts there
+        steer_deadband_min_angle: |angle| [rad] below which the steering stays
+            centred when steer_deadband is set
     """
 
     min_pwm: int
@@ -162,6 +169,9 @@ class Config:
     wheelbase: float
     track_width: float
 
+    steer_deadband: int = 0
+    steer_deadband_min_angle: float = 0.01
+
 
 def make_config(params: Dict[str, Any]) -> Config:
     return Config(
@@ -177,6 +187,8 @@ def make_config(params: Dict[str, Any]) -> Config:
         max_steering_angle=params['max_steering_angle'],
         wheelbase=params['wheelbase'],
         track_width=params['track_width'],
+        steer_deadband=int(params.get('steer_deadband', 0) or 0),
+        steer_deadband_min_angle=float(params.get('steer_deadband_min_angle', 0.01)),
     )
 
 
@@ -362,6 +374,16 @@ class ActuatorCore:
 
         # Convert the steering angle to PWM value
         steer = average_angle * self.config.tire_angle_to_steer_ratio
+        if self.config.steer_deadband > 0:
+            # A servo whose wheels do not move within +-steer_deadband counts of
+            # init_steer (car C, about 385..412 around 400) ignores every small
+            # correction; the tracker's error grows until a large one moves the
+            # wheels, late, and the car snakes. A command starts at the band's
+            # edge instead; a near-zero one stays centred, so it does not chatter.
+            if abs(average_angle) < self.config.steer_deadband_min_angle:
+                steer = 0.0
+            else:
+                steer = math.copysign(self.config.steer_deadband + abs(steer), steer)
         steer_pwm = self.config.init_steer + int(steer)
 
         # Clamp PWM to limits

@@ -232,7 +232,8 @@ class AutoSdvActuator(Node):
         self.declare_parameter('velocity_timeout', DEFAULTS['velocity_timeout'])
         self.declare_parameter('override_brake_duration', DEFAULTS['override_brake_duration'])
         # The car's ESC thresholds; 0 = not measured
-        for name in ESC_PWM_KEYS + ('esc_deadzone_compensation', 'drive_floor_pwm'):
+        for name in ESC_PWM_KEYS + ('esc_deadzone_compensation', 'drive_floor_pwm',
+                                    'steer_deadband', 'steer_deadband_min_angle'):
             self.declare_parameter(name, DEFAULTS[name])
         self.declare_parameter('enable_emergency_input', DEFAULTS['enable_emergency_input'])
         self.declare_parameter('emergency_stop_on_any_mrm', DEFAULTS['emergency_stop_on_any_mrm'])
@@ -391,6 +392,8 @@ class AutoSdvActuator(Node):
             *ESC_PWM_KEYS,
             "esc_deadzone_compensation",
             "drive_floor_pwm",
+            "steer_deadband",
+            "steer_deadband_min_angle",
         ):
             params[name] = self.get_parameter(name).value
         params["speed_controller_params"] = self._speed_controller_params_text()

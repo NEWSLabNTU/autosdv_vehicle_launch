@@ -98,3 +98,32 @@ def test_steering_clamps_to_the_lock_and_maps_through_the_ratio():
         steer = core.tick(0.01 * k, 0.01 * k)[1]
     assert core.state.target_tire_angle == 0.349
     assert steer == 439                                 # min_steer: the lock, clamped
+
+
+def _settled_steer(core, angle):
+    core.on_velocity(0.0, 0.0, 0.0)
+    for k in range(200):                               # let the 0.3 EMA settle
+        core.on_command(0.01 * k, 0.0, angle)
+        steer = core.tick(0.01 * k, 0.01 * k)[1]
+    return steer
+
+
+CAR_C_STEER = dict(init_steer=400, min_steer=355, max_steer=445, tire_angle_to_steer_ratio=132.0)
+
+
+def test_steer_deadband_off_by_default_maps_straight_through():
+    assert _settled_steer(make_core(**CAR_C_STEER), 0.02) == 402
+
+
+def test_steer_deadband_starts_a_command_at_the_band_edge():
+    for angle, pwm in ((0.02, 415), (-0.02, 385)):     # 13 counts + 2.6 from the ratio
+        assert _settled_steer(make_core(steer_deadband=13, **CAR_C_STEER), angle) == pwm
+
+
+def test_steer_deadband_keeps_a_near_zero_command_centred():
+    assert _settled_steer(make_core(steer_deadband=13, **CAR_C_STEER), 0.005) == 400
+    assert _settled_steer(make_core(steer_deadband=13, **CAR_C_STEER), 0.0) == 400
+
+
+def test_steer_deadband_still_clamps_at_the_lock():
+    assert _settled_steer(make_core(steer_deadband=13, **CAR_C_STEER), 1.0) == 445

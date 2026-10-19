@@ -51,6 +51,13 @@
     # The lowest drive command while moving; 0 = forward_hold_pwm + 1
     drive_floor_pwm: 0
 
+    ## The steering servo's dead band (actuator_core.run_steering_control): the
+    # counts around init_steer where the servo does not move the wheels. A car
+    # sets it in its individual_params actuator.param.yaml; 0 = none.
+    steer_deadband: 0
+    # [rad] commands smaller than this stay centred when steer_deadband is set
+    steer_deadband_min_angle: 0.01
+
     # Brake threshold - minimum speed to trigger active braking when target is zero
     brake_threshold: 0.2  # m/s - threshold for considering significant motion
 
