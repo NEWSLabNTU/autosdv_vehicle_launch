@@ -55,3 +55,17 @@ def test_a_car_file_only_overrides_actuator_yaml(path):
     assert p['min_steer'] < p['init_steer'] < p['max_steer']
     assert p['min_pwm'] <= p['init_pwm'] < p['max_pwm']
     assert p['brake_pwm'] < p['init_pwm']
+
+
+def test_the_loader_merges_like_the_launch():
+    """car_profile.load is what the actuator sees: actuator.yaml, then the car."""
+    from autosdv_vehicle_interface import car_profile
+    assert car_profile.names(PARAMS) == [os.path.basename(c)[:-len('.param.yaml')] for c in CARS]
+    for path in CARS:
+        name = os.path.basename(path)[:-len('.param.yaml')]
+        assert car_profile.load(name, PARAMS) == {**BASE, **ros_params(path)}
+    with pytest.raises(ValueError, match='unknown car profile'):
+        car_profile.load('car_z', PARAMS)
+    with pytest.raises(ValueError):
+        car_profile.load('', PARAMS)
+
