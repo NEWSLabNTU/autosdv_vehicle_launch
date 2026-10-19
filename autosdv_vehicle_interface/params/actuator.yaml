@@ -27,6 +27,22 @@
     # Brake sequence PWM value (used for forward-to-backward transition)
     brake_pwm: 340
 
+    ## ESC thresholds (docs/design/esc-pwm-model.md), set per car in its
+    # individual_params profile; 0 = not measured, which leaves the shell as it
+    # always was. When set, the actuator refuses a profile whose brake_pwm or
+    # min_pwm could arm reverse, or whose init_pwm is not inside
+    # reverse_stop_pwm..forward_start_pwm, and never reverses the car unasked.
+    # Forward from rest at or above this (also disarms reverse)
+    forward_start_pwm: 0
+    # Once moving forward, it keeps going above this
+    forward_hold_pwm: 0
+    # Armed: reverse stops at or above this
+    reverse_stop_pwm: 0
+    # Armed: reverse starts from rest at or below this
+    reverse_start_pwm: 0
+    # A pull to this or lower arms reverse
+    reverse_arm_pwm: 0
+
     # Brake threshold - minimum speed to trigger active braking when target is zero
     brake_threshold: 0.2  # m/s - threshold for considering significant motion
 

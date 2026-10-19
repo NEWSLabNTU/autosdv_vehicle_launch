@@ -34,6 +34,20 @@ drove the motor forward on a stop command: a car slowing through that band
 re-accelerated into BRAKE, and cycled BRAKE/ACTIVE/FULL_STOP while creeping
 forward. A stop command now never reaches the plug-in.
 
+ESC model (docs/design/esc-pwm-model.md). The cars' ESCs share one state
+machine with per-car thresholds: forward from rest needs ``forward_start_pwm``
+and, once moving, holds above ``forward_hold_pwm``; below the stop the ESC only
+brakes until reverse is armed, by a pull to ``reverse_arm_pwm`` or lower and a
+return; armed, it reverses at or below ``reverse_start_pwm`` and keeps
+reversing below ``reverse_stop_pwm``, and only ``forward_start_pwm`` disarms it.
+When a car's profile sets these thresholds (0 = not measured), the shell
+refuses a configuration that could arm reverse by itself (``brake_pwm`` or
+``min_pwm`` at or below ``reverse_arm_pwm``) or whose stop is not inside the
+band where nothing moves (``reverse_stop_pwm <= init_pwm < forward_start_pwm``),
+tracks the ESC state from the commands it sends (:class:`EscModel`), and, should
+the ESC ever be armed, never sends a command that would reverse the car
+unasked. The shell does not drive backward on purpose.
+
 This module has no ROS dependency, so the motor bench (``speed_bench.py``) runs
 the same shell the vehicle does.
 """
@@ -65,6 +79,58 @@ OVERRIDE_COMMAND_TIMEOUT = "command_timeout"
 OVERRIDE_VELOCITY_TIMEOUT = "velocity_timeout"
 OVERRIDE_CONTROLLER_FAULT = "controller_fault"
 
+
+class EscState(Enum):
+    """The ESC's state, as the shell's own commands imply it."""
+
+    UNMODELLED = "unmodelled"   # the car's profile has no thresholds
+    LOCKED = "locked"           # power-on, or after forward: below the stop brakes
+    FORWARD = "forward"         # driving forward
+    ARMING = "arming"           # pulled to reverse_arm_pwm or lower
+    ARMED = "armed"             # below reverse_start_pwm reverses
+
+
+# The ESC thresholds a car profile may set; 0 means not measured.
+ESC_PWM_KEYS = ("forward_start_pwm", "forward_hold_pwm", "reverse_stop_pwm",
+                "reverse_start_pwm", "reverse_arm_pwm")
+
+
+class EscModel:
+    """
+    The ESC state machine, driven by the commanded PWM alone.
+
+    Conservative where a command alone cannot tell: any return above
+    ``reverse_arm_pwm`` after arming counts as armed (the measured return
+    points were at or below the stop), and forward motion ends at
+    ``forward_hold_pwm`` (``init_pwm`` when that is not measured).
+    """
+
+    def __init__(self, config: "ShellConfig"):
+        self.enabled = config.reverse_arm_pwm > 0 and config.forward_start_pwm > 0
+        self.forward_start = config.forward_start_pwm
+        self.forward_hold = config.forward_hold_pwm or config.init_pwm
+        self.arm = config.reverse_arm_pwm
+        # Unknown at start (a manual test may have left reverse armed): assume
+        # armed until a forward command disarms it. It costs nothing -- a
+        # stopped car needs no brake -- and a wrong "locked" could reverse it.
+        self.state = EscState.ARMED if self.enabled else EscState.UNMODELLED
+
+    def update(self, pwm: int) -> EscState:
+        if not self.enabled:
+            return self.state
+        s = self.state
+        if pwm >= self.forward_start:
+            s = EscState.FORWARD
+        elif pwm <= self.arm:
+            s = EscState.ARMING
+        elif s == EscState.FORWARD and pwm <= self.forward_hold:
+            s = EscState.LOCKED
+        elif s == EscState.ARMING:
+            s = EscState.ARMED
+        self.state = s
+        return s
+
+
 DT_SOURCE_VELOCITY_REPORT = "velocity_report"
 DT_SOURCE_LOOP = "loop"
 
@@ -92,6 +158,10 @@ class ShellConfig:
         coast_on_stop: COAST a zero target below ``brake_threshold`` instead
             of running the plug-in (see the module docstring). Off only to
             compare against the legacy code.
+        forward_start_pwm, forward_hold_pwm, reverse_stop_pwm,
+        reverse_start_pwm, reverse_arm_pwm: the car's ESC thresholds (see the
+            module docstring); 0 = not measured, which leaves the shell as it
+            always was.
     """
 
     init_pwm: int
@@ -106,6 +176,38 @@ class ShellConfig:
     controller_max_faults: int = 3
     dt_source: str = DT_SOURCE_VELOCITY_REPORT
     coast_on_stop: bool = True
+    forward_start_pwm: int = 0
+    forward_hold_pwm: int = 0
+    reverse_stop_pwm: int = 0
+    reverse_start_pwm: int = 0
+    reverse_arm_pwm: int = 0
+
+
+def check_esc_config(cfg: ShellConfig) -> None:
+    """Refuse a car profile whose own values could reverse the car unasked."""
+    problems = []
+    if cfg.reverse_arm_pwm > 0:
+        for name in ("brake_pwm", "min_pwm"):
+            if getattr(cfg, name) <= cfg.reverse_arm_pwm:
+                problems.append(
+                    f"{name} {getattr(cfg, name)} is at or below reverse_arm_pwm "
+                    f"{cfg.reverse_arm_pwm}: every use of it arms the ESC's reverse")
+    if cfg.forward_start_pwm > 0 and not cfg.init_pwm < cfg.forward_start_pwm:
+        problems.append(f"init_pwm {cfg.init_pwm} is not below forward_start_pwm "
+                        f"{cfg.forward_start_pwm}: the stop would drive forward")
+    if cfg.reverse_stop_pwm > 0 and not cfg.reverse_stop_pwm <= cfg.init_pwm:
+        problems.append(f"init_pwm {cfg.init_pwm} is below reverse_stop_pwm "
+                        f"{cfg.reverse_stop_pwm}: armed, the stop would reverse")
+    if cfg.forward_hold_pwm > 0 and cfg.forward_start_pwm > 0 and \
+            not cfg.init_pwm <= cfg.forward_hold_pwm < cfg.forward_start_pwm:
+        problems.append(f"forward_hold_pwm {cfg.forward_hold_pwm} must lie in "
+                        f"init_pwm..forward_start_pwm ({cfg.init_pwm}..{cfg.forward_start_pwm})")
+    if cfg.reverse_start_pwm > 0 and cfg.reverse_stop_pwm > 0 and \
+            not cfg.reverse_start_pwm < cfg.reverse_stop_pwm:
+        problems.append(f"reverse_start_pwm {cfg.reverse_start_pwm} must be below "
+                        f"reverse_stop_pwm {cfg.reverse_stop_pwm}")
+    if problems:
+        raise ValueError("car profile (ESC thresholds): " + "; ".join(problems))
 
 
 class LongitudinalShell:
@@ -130,7 +232,9 @@ class LongitudinalShell:
                 f"speed_controller_dt_source must be '{DT_SOURCE_VELOCITY_REPORT}' "
                 f"or '{DT_SOURCE_LOOP}', got '{config.dt_source}'"
             )
+        check_esc_config(config)
         self.config = config
+        self.esc = EscModel(config)
         self.controller = controller
         self.logger = logger if logger is not None else logging.getLogger(__name__)
 
@@ -200,8 +304,28 @@ class LongitudinalShell:
         else:
             pwm = self._run_control(now, target_speed, current_speed, dt)
 
+        pwm = self._guard_reverse(pwm, target_speed if override is None else None)
+        self.esc.update(pwm)
         self.last_output_pwm = pwm
         return pwm
+
+    @property
+    def esc_state(self) -> EscState:
+        return self.esc.state
+
+    def _guard_reverse(self, pwm: int, target_speed: Optional[float]) -> int:
+        """Armed, a command below reverse_stop_pwm reverses: never send it unasked."""
+        cfg = self.config
+        if self.esc.state != EscState.ARMED or cfg.reverse_stop_pwm <= 0:
+            return pwm
+        if pwm >= cfg.reverse_stop_pwm:
+            return pwm
+        if target_speed is not None and target_speed < -cfg.full_stop_threshold:
+            return pwm   # a backward target: the reverse is asked for
+        self.logger.warning(
+            f"ESC is armed for reverse: {pwm} would reverse the car; sending "
+            f"init_pwm {cfg.init_pwm} instead")
+        return cfg.init_pwm
 
     def _delta_time(self, now: float, last_velocity_time: float) -> float:
         if self.config.dt_source == DT_SOURCE_LOOP:

@@ -24,6 +24,7 @@ from autosdv_vehicle_interface.actuator_core import (  # noqa: F401  (State, Con
     DEFAULTS,
     State,
 )
+from autosdv_vehicle_interface.longitudinal import ESC_PWM_KEYS
 from autosdv_vehicle_interface.hal import (
     ACTUATOR,
     check_hardware,
@@ -230,6 +231,9 @@ class AutoSdvActuator(Node):
         self.declare_parameter('control_cmd_max_stamp_age', DEFAULTS['control_cmd_max_stamp_age'])
         self.declare_parameter('velocity_timeout', DEFAULTS['velocity_timeout'])
         self.declare_parameter('override_brake_duration', DEFAULTS['override_brake_duration'])
+        # The car's ESC thresholds; 0 = not measured
+        for name in ESC_PWM_KEYS:
+            self.declare_parameter(name, DEFAULTS[name])
         self.declare_parameter('enable_emergency_input', DEFAULTS['enable_emergency_input'])
         self.declare_parameter('emergency_stop_on_any_mrm', DEFAULTS['emergency_stop_on_any_mrm'])
         self.declare_parameter('neutral_write_timeout', DEFAULTS['neutral_write_timeout'])
@@ -384,6 +388,7 @@ class AutoSdvActuator(Node):
             "enable_emergency_input",
             "emergency_stop_on_any_mrm",
             "neutral_write_timeout",
+            *ESC_PWM_KEYS,
         ):
             params[name] = self.get_parameter(name).value
         params["speed_controller_params"] = self._speed_controller_params_text()
@@ -596,6 +601,13 @@ class AutoSdvActuator(Node):
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
         )
         self._published_mode = None
+        # The ESC state the shell's commands imply (longitudinal.EscModel)
+        self.esc_state_publisher = self.create_publisher(
+            String,
+            "~/debug/esc_state",
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+        )
+        self._published_esc_state = None
 
         # Create debug publishers
         self.debug_control_publisher = self.create_publisher(
@@ -852,6 +864,10 @@ class AutoSdvActuator(Node):
         if mode != self._published_mode:
             self.mode_publisher.publish(String(data=mode))
             self._published_mode = mode
+        esc_state = self.longitudinal.esc_state.value
+        if esc_state != self._published_esc_state:
+            self.esc_state_publisher.publish(String(data=esc_state))
+            self._published_esc_state = esc_state
 
     def write_neutral_outputs(self) -> bool:
         """

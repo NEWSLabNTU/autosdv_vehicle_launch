@@ -39,7 +39,7 @@ ACTUATOR_KEYS = (
     "velocity_deadband", "full_stop_threshold", "derivative_filter_alpha",
     "override_brake_duration", "controller_fault_holdoff", "controller_max_faults",
 )
-DEFAULT_VEHICLE_ID = "car_a"
+DEFAULT_VEHICLE_ID = "sim"   # the simulated nominal car: actuator.yaml's values
 
 
 def actuator_params(vehicle_id: str = DEFAULT_VEHICLE_ID) -> Dict[str, Any]:
@@ -51,7 +51,7 @@ def actuator_params(vehicle_id: str = DEFAULT_VEHICLE_ID) -> Dict[str, Any]:
     return out
 
 
-# car_a's: test_speed_bench.py checks these against the files.
+# sim's: test_speed_bench.py checks these against the files.
 DEFAULT_ACTUATOR_PARAMS: Dict[str, Any] = actuator_params()
 
 CONTROLLER_PARAM_KEYS = (
@@ -126,7 +126,7 @@ def run_step(
         target_speed: Step size [m/s].
         duration: Simulated time [s].
         step_time: When the target steps up [s]; zero before it.
-        actuator_params: Actuator parameters; defaults to car_a's (DEFAULT_ACTUATOR_PARAMS).
+        actuator_params: Actuator parameters; defaults to sim's (DEFAULT_ACTUATOR_PARAMS).
         plant_params: Plant parameters; defaults to the provisional set.
         report_rate: velocity_report publication rate [Hz].
         substep: Plant integration step [s].
@@ -249,7 +249,7 @@ def main(argv=None) -> int:
     parser.add_argument("--params", type=_mapping, default={},
                         help="speed_controller_params, a YAML mapping")
     car_profile.add_argument(parser, default=DEFAULT_VEHICLE_ID,
-                             help="the car whose PWM points the bench runs (default car_a)")
+                             help="the car whose PWM points the bench runs (default sim, the nominal car)")
     parser.add_argument("--actuator", type=_mapping, default={},
                         help="actuator parameter overrides, e.g. '{max_pwm: 430}'")
     parser.add_argument("--plant", type=_mapping, default={},

@@ -115,8 +115,8 @@ def test_hall_sensor_decays_after_a_sudden_stop():
 
 
 def test_actuator_defaults_match_params_file():
-    # car_a's PWM points (actuator.yaml under individual_params' car_a), as the actuator sees it
-    params = car_profile.load("car_a")
+    # sim's PWM points (actuator.yaml under individual_params' sim), as the actuator sees it
+    params = car_profile.load("sim")
     # The speed_controller_* defaults live in the launch file, not actuator.yaml.
     launch = ET.parse(VEHICLE_INTERFACE_LAUNCH).getroot()
     params |= {a.get("name"): a.get("default") for a in launch.iter("arg")

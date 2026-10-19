@@ -44,21 +44,28 @@ BASE = ros_params(os.path.join(PARAMS, 'actuator.yaml'))
 
 
 def test_the_fleet_is_there():
-    """The cars the RC sim, the benches and lab2 name all have an instance file."""
-    assert {'car_a', 'car_b', 'car_c'} <= set(car_profile.names(CONFIG))
+    """The cars lab2 names, and sim (the RC sim's and the benches'), have an instance file."""
+    assert {'sim', 'car_a', 'car_b', 'car_c'} <= set(car_profile.names(CONFIG))
 
 
-def test_car_a_is_actuator_yaml():
-    """car_a restates actuator.yaml, the Velodyne car's values; they must agree."""
-    car_a = ros_params(car_profile.instance_file('car_a', CONFIG))
-    assert car_a == {k: BASE[k] for k in car_a}
+def test_sim_is_actuator_yaml():
+    """sim, the simulated nominal car, restates actuator.yaml, which the plants model.
+
+    car_a used to be this car; it is measured now, so only sim is pinned to the file."""
+    sim = ros_params(car_profile.instance_file('sim', CONFIG))
+    assert sim == {k: BASE[k] for k in sim}
+    # unmodelled: actuator.yaml's ratio (or a launch's stand-in) and its unmeasured ESC points
+    assert not ({'tire_angle_to_steer_ratio'} | ESC_POINTS) & set(sim)
 
 
 # What every car sets. A file left partial would inherit car A's stop PWM.
 # tire_angle_to_steer_ratio is set only once measured: unset, actuator.yaml's
 # or a launch's stand-in (Lab 2's actuator_param_overrides) applies.
 REQUIRED = {'init_pwm', 'brake_pwm', 'init_steer', 'min_steer', 'max_steer'}
-OPTIONAL = {'tire_angle_to_steer_ratio'}
+# The ESC's measured points (actuator.yaml: 0 = not measured) likewise.
+ESC_POINTS = {'forward_start_pwm', 'forward_hold_pwm', 'reverse_stop_pwm',
+              'reverse_start_pwm', 'reverse_arm_pwm'}
+OPTIONAL = {'tire_angle_to_steer_ratio'} | ESC_POINTS
 
 
 @pytest.mark.parametrize('path', CARS, ids=vehicle_id)
@@ -78,6 +85,7 @@ def test_a_car_file_only_overrides_actuator_yaml(path):
     p = {**BASE, **car}
     assert p['min_steer'] < p['init_steer'] < p['max_steer']
     assert p['min_pwm'] <= p['init_pwm'] < p['max_pwm']
+    # below neutral; it may sit above min_pwm (car C's provisional brake 375, min 360)
     assert p['brake_pwm'] < p['init_pwm']
 
 

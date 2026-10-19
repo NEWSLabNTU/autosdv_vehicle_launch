@@ -15,6 +15,7 @@ import math
 from typing import Any, Dict, Optional, Tuple
 
 from autosdv_vehicle_interface.longitudinal import (
+    ESC_PWM_KEYS,
     LongitudinalShell,
     OVERRIDE_COMMAND_TIMEOUT,
     OVERRIDE_EMERGENCY,
@@ -39,6 +40,13 @@ DEFAULTS: Dict[str, Any] = {
     'enable_emergency_input': True,
     'emergency_stop_on_any_mrm': False,
     'neutral_write_timeout': 0.5,
+    # The car's ESC thresholds (longitudinal.py, docs/design/esc-pwm-model.md);
+    # 0 = not measured, which leaves the shell as it always was.
+    'forward_start_pwm': 0,
+    'forward_hold_pwm': 0,
+    'reverse_stop_pwm': 0,
+    'reverse_start_pwm': 0,
+    'reverse_arm_pwm': 0,
 }
 
 # vehicle_info.param.yaml's names -> the names this code uses
@@ -178,6 +186,7 @@ def make_shell_config(params: Dict[str, Any]) -> ShellConfig:
         controller_fault_holdoff=params['controller_fault_holdoff'],
         controller_max_faults=params['controller_max_faults'],
         dt_source=params['speed_controller_dt_source'],
+        **{key: int(params[key]) for key in ESC_PWM_KEYS},
     )
 
 
