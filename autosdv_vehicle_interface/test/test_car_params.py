@@ -101,10 +101,40 @@ def test_a_car_file_only_overrides_actuator_yaml(path):
     assert p['brake_pwm'] < p['init_pwm']
 
 
+def tuning_file(path):
+    """Return the car's speed_controller.param.yaml beside its actuator file."""
+    return os.path.join(os.path.dirname(path), 'speed_controller.param.yaml')
+
+
+# What a car's tuning file may set: the default controller's gains and its ESC
+# dead-band compensation. PWM points stay in actuator.param.yaml.
+TUNING = {'kp_speed', 'ki_speed', 'kd_speed', 'integral_limit',
+          'enable_conditional_integration', 'derivative_filter_alpha',
+          'esc_deadzone_compensation', 'drive_floor_pwm'}
+
+
+@pytest.mark.parametrize('path', CARS, ids=vehicle_id)
+def test_every_car_has_a_tuning_file_of_tuning_only(path):
+    """The launch loads it for every car, so it must exist; only TUNING keys."""
+    keys = set(ros_params(tuning_file(path)))
+    assert keys <= TUNING, keys - TUNING
+    assert keys <= set(BASE), keys - set(BASE)
+
+
+@pytest.mark.parametrize('path', CARS, ids=vehicle_id)
+def test_a_compensating_car_has_its_band_measured(path):
+    """esc_deadzone_compensation needs forward_hold_pwm < floor < forward_start_pwm."""
+    p = car_profile.load(vehicle_id(path), PARAMS, CONFIG)
+    if p.get('esc_deadzone_compensation'):
+        floor = p['drive_floor_pwm'] or p['forward_hold_pwm'] + 1
+        assert 0 < p['forward_hold_pwm'] < floor < p['forward_start_pwm']
+
+
 def test_the_loader_merges_like_the_launch():
-    """car_profile.load is what the actuator sees: actuator.yaml, then the car."""
+    """car_profile.load is what the actuator sees: actuator.yaml, the car, its tuning."""
     for path in CARS:
-        assert car_profile.load(vehicle_id(path), PARAMS, CONFIG) == {**BASE, **ros_params(path)}
+        assert car_profile.load(vehicle_id(path), PARAMS, CONFIG) == \
+            {**BASE, **ros_params(path), **ros_params(tuning_file(path))}
     for bad in ('car_z', 'default', ''):
         with pytest.raises(ValueError, match='unknown vehicle_id'):
             car_profile.load(bad, PARAMS, CONFIG)
@@ -116,6 +146,6 @@ def test_the_launch_loads_the_same_file():
                           'launch', 'vehicle_interface.launch.xml')
     with open(launch) as f:
         text = f.read()
-    assert ('$(find-pkg-share individual_params)/config/$(var vehicle_id)/'
-            + car_profile.INSTANCE_FILE) in text
+    for name in (car_profile.INSTANCE_FILE, car_profile.TUNING_FILE):
+        assert '$(find-pkg-share individual_params)/config/$(var vehicle_id)/' + name in text
     assert 'car_profile' not in text

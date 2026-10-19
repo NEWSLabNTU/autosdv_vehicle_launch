@@ -47,6 +47,10 @@ DEFAULTS: Dict[str, Any] = {
     'reverse_stop_pwm': 0,
     'reverse_start_pwm': 0,
     'reverse_arm_pwm': 0,
+    # The default controller's ESC dead-band compensation (speed_controller.py),
+    # set per car in its speed_controller.param.yaml; off unless set
+    'esc_deadzone_compensation': False,
+    'drive_floor_pwm': 0,
 }
 
 # vehicle_info.param.yaml's names -> the names this code uses
@@ -63,6 +67,7 @@ SPEED_CONTROLLER_BASE_PARAMS = (
     'enable_conditional_integration', 'derivative_filter_alpha',
     # the car's ESC dead band, for a controller that compensates it
     'forward_start_pwm', 'forward_hold_pwm', 'full_stop_threshold',
+    'esc_deadzone_compensation', 'drive_floor_pwm',
 )
 
 

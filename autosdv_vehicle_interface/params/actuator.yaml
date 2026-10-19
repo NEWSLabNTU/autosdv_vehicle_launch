@@ -43,6 +43,14 @@
     # A pull to this or lower arms reverse
     reverse_arm_pwm: 0
 
+    ## The default speed controller's ESC dead-band compensation
+    # (speed_controller.py, AckermannSpeedPID); a car turns it on in its
+    # individual_params speed_controller.param.yaml, with its tuned gains.
+    # speed_controller_params on the command line still overrides both.
+    esc_deadzone_compensation: false
+    # The lowest drive command while moving; 0 = forward_hold_pwm + 1
+    drive_floor_pwm: 0
+
     # Brake threshold - minimum speed to trigger active braking when target is zero
     brake_threshold: 0.2  # m/s - threshold for considering significant motion
 

@@ -31,6 +31,10 @@
        description="a param file loaded into the actuator after actuator.yaml, for per-launch overrides such as a measured tire_angle_to_steer_ratio (the Lab 2 waypoint launch). Default: actuator.yaml again, which changes nothing"/>
   <let name="car_param_file"
        value="$(find-pkg-share individual_params)/config/$(var vehicle_id)/autosdv_vehicle/actuator.param.yaml"/>
+  <!-- the car's tuning of the default speed controller (gains, ESC dead-band
+       compensation); empty for a car with no tuning, so actuator.yaml's stand -->
+  <let name="car_tuning_file"
+       value="$(find-pkg-share individual_params)/config/$(var vehicle_id)/autosdv_vehicle/speed_controller.param.yaml"/>
 
   <!-- Vehicle Interface -->
   <group if="$(var launch_vehicle_interface)">
@@ -43,6 +47,7 @@
       <param from="$(var vehicle_info_param_file)"/>
       <param from="$(var actuator_param_overrides)"/>
       <param from="$(var car_param_file)"/>
+      <param from="$(var car_tuning_file)"/>
       <param name="vehicle_id" value="$(var vehicle_id)"/>
       <!-- Override dry_run parameter based on is_simulation flag -->
       <param name="dry_run" value="$(var is_simulation)"/>

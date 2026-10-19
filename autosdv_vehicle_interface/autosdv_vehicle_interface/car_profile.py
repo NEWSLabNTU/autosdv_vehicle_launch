@@ -34,6 +34,8 @@ import yaml
 PACKAGE = 'autosdv_vehicle_interface'
 INSTANCES_PACKAGE = 'individual_params'
 INSTANCE_FILE = os.path.join('autosdv_vehicle', 'actuator.param.yaml')
+# The car's tuning of the default speed controller, loaded after INSTANCE_FILE
+TUNING_FILE = os.path.join('autosdv_vehicle', 'speed_controller.param.yaml')
 # individual_params' config/ in this workspace's source tree, relative to src/
 _SOURCE_CONFIG = os.path.join('param', 'autoware_individual_params', 'individual_params', 'config')
 
@@ -90,14 +92,16 @@ def names(config: Optional[str] = None) -> List[str]:
 
 def load(vehicle_id: str, directory: Optional[str] = None,
          config: Optional[str] = None) -> Dict[str, Any]:
-    """Return actuator.yaml's parameters under the car's instance file, as the actuator sees them."""
+    """Return actuator.yaml under the car's instance and tuning files, as the actuator sees them."""
     directory = directory or params_dir()
     config = config or config_dir()
     path = instance_file(vehicle_id, config) if vehicle_id else ''
     if not path or not os.path.isfile(path):
         raise ValueError(f'unknown vehicle_id {vehicle_id!r}: one of {", ".join(names(config))} '
                          f'(individual_params/config/<vehicle_id>/{INSTANCE_FILE})')
-    return {**_ros_params(os.path.join(directory, 'actuator.yaml')), **_ros_params(path)}
+    tuning = os.path.join(config, vehicle_id, TUNING_FILE)
+    return {**_ros_params(os.path.join(directory, 'actuator.yaml')), **_ros_params(path),
+            **(_ros_params(tuning) if os.path.isfile(tuning) else {})}
 
 
 def add_argument(parser: argparse.ArgumentParser, *flags: str, **kwargs) -> None:
