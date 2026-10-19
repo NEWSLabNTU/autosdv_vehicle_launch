@@ -11,7 +11,8 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         (f"share/{package_name}", ["package.xml"]),
-        (f"share/{package_name}/params", glob("params/*")),
+        (f"share/{package_name}/params", glob("params/*.yaml")),
+        (f"share/{package_name}/params/cars", glob("params/cars/*.yaml")),
     ],
     install_requires=[
         "setuptools",

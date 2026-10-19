@@ -1,0 +1,22 @@
+# Car C: NOT MEASURED. A copy of car B's profile (car_b.param.yaml) until car C
+# is calibrated; replace every value below with car C's own.
+# Select with the launch argument car_profile:=car_c.
+/**:
+  ros__parameters:
+    ## Motor: stopped at 395; barely moves forward at 405. Reverse needs the
+    # ESC's brake-then-neutral sequence: down to 365, back to 395, then below
+    # 395 drives backward (the ESC does this, not the actuator).
+    init_pwm: 395
+    brake_pwm: 365
+
+    ## Steering: centre 400, +-45 counts. Lower PWM (355) = RIGHT turn, higher
+    # PWM (445) = LEFT turn, as on the other cars.
+    init_steer: 400
+    min_steer: 355
+    max_steer: 445
+
+    # Full lock (+-45 PWM) drives a circle of about 0.90 m radius, taken as the
+    # rear-axle centre: lock atan(0.319 / 0.90) = 0.340 rad, so 45 / 0.340 =
+    # 132 counts/rad. The sign is the stand-in's (lower PWM = right). One rough
+    # point, not a steer-fit: replace it with `just lab2 steer-fit`'s result.
+    tire_angle_to_steer_ratio: -132.0

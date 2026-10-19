@@ -86,6 +86,17 @@ class AutoSdvActuator(Node):
         # Declare all parameters
         self.declare_all_parameters()
 
+        # The cars differ in their stop PWM (car A 370, car B 395), so the node
+        # refuses to guess one: the wrong neutral drives a car instead of
+        # stopping it. Raised before any PWM driver exists, so nothing is written.
+        car_profile = self.get_parameter('car_profile').value
+        if not car_profile:
+            msg = ('car_profile is not set: launch with car_profile:=car_a, car_b '
+                   'or car_c (autosdv_vehicle_interface/params/cars/)')
+            self.get_logger().fatal(msg)
+            raise RuntimeError(msg)
+        self.get_logger().info(f'car profile: {car_profile}')
+
         # Get parameter values
         parameter_values = self.get_all_parameter_values()
 
@@ -157,6 +168,9 @@ class AutoSdvActuator(Node):
 
         # PWM backend: real (PCA9685 over I2C) or sim (the rc_sim plant)
         self.declare_parameter('hardware', 'real')
+
+        # Which car's PWM profile the launch loaded (params/cars/)
+        self.declare_parameter('car_profile', '')
 
         # Longitudinal control parameters
         self.declare_parameter("kp_speed", Parameter.Type.DOUBLE)

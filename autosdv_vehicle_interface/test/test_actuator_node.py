@@ -43,7 +43,10 @@ ACTUATOR_YAML = os.path.join(PKG, "params", "actuator.yaml")
 VEHICLE_INFO_YAML = os.path.join(
     PKG, "..", "autosdv_vehicle_description", "config", "vehicle_info.param.yaml"
 )
-INIT_PWM, INIT_STEER, BRAKE_PWM = 370, 489, 340
+# The neutral outputs are whatever actuator.yaml says: they differ per car.
+with open(ACTUATOR_YAML) as _f:
+    _P = yaml.safe_load(_f)["/**"]["ros__parameters"]
+INIT_PWM, INIT_STEER, BRAKE_PWM = _P["init_pwm"], _P["init_steer"], _P["brake_pwm"]
 
 
 def load_params(**overrides):
@@ -51,6 +54,7 @@ def load_params(**overrides):
     for path in (ACTUATOR_YAML, VEHICLE_INFO_YAML):
         with open(path) as f:
             values.update(yaml.safe_load(f)["/**"]["ros__parameters"])
+    values['car_profile'] = 'car_a'     # actuator.yaml's values are car A's
     values.update(overrides)
     return [Parameter(k, value=v) for k, v in values.items()]
 
@@ -77,6 +81,11 @@ def make_node(ros, fake_pca, monkeypatch):
     for node in nodes:
         node._neutral_written = True  # already checked where it matters
         node.destroy_node()
+
+
+def test_refuses_to_start_without_a_car_profile(make_node):
+    with pytest.raises(RuntimeError, match='car_profile is not set'):
+        make_node(car_profile='')
 
 
 def control(node, velocity, steer=0.0, age=0.0, stamped=True):
@@ -297,7 +306,8 @@ RUNNER = textwrap.dedent("""
             raise RuntimeError("injected failure")
         actuator.AutoSdvActuator.timer_callback = boom
     sys.argv = ["actuator", "--ros-args", "--params-file", sys.argv[1],
-                "--params-file", sys.argv[2], "-p", "enable_debug_publishing:=false"]
+                "--params-file", sys.argv[2], "-p", "enable_debug_publishing:=false",
+                "-p", "car_profile:=car_a"]
     actuator.main()
 """)
 

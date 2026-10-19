@@ -28,6 +28,11 @@
   <arg name="actuator_param_overrides"
        default="$(find-pkg-share autosdv_vehicle_interface)/params/actuator.yaml"
        description="a param file loaded into the actuator after actuator.yaml, for per-launch overrides such as a measured tire_angle_to_steer_ratio (the Lab 2 waypoint launch). Default: actuator.yaml again, which changes nothing"/>
+  <arg name="car_profile" default=""
+       description="REQUIRED: which physical car, car_a, car_b or car_c. Loads params/cars/CAR_PROFILE.param.yaml last into the actuator and the gear manager, so its measured neutral, brake and steering points win over actuator.yaml and actuator_param_overrides. Unset, the actuator refuses to start: the cars differ in their stop PWM, and the wrong one drives a car instead of stopping it. (Not a parse-time required argument: Autoware's vehicle.launch.xml includes this file and would have to pass it.)"/>
+  <!-- unset: actuator.yaml again (a no-op), and the actuator's own check refuses -->
+  <let name="car_param_file"
+       value="$(eval &quot;'$(find-pkg-share autosdv_vehicle_interface)/params/' + ('cars/$(var car_profile).param.yaml' if '$(var car_profile)' else 'actuator.yaml')&quot;)"/>
 
   <!-- Vehicle Interface -->
   <group if="$(var launch_vehicle_interface)">
@@ -39,6 +44,8 @@
       <param from="$(find-pkg-share autosdv_vehicle_interface)/params/actuator.yaml"/>
       <param from="$(var vehicle_info_param_file)"/>
       <param from="$(var actuator_param_overrides)"/>
+      <param from="$(var car_param_file)"/>
+      <param name="car_profile" value="$(var car_profile)"/>
       <!-- Override dry_run parameter based on is_simulation flag -->
       <param name="dry_run" value="$(var is_simulation)"/>
       <param name="hardware" value="$(var hardware)"/>
@@ -65,6 +72,7 @@
     <!-- Uses actuator.yaml as single source of truth for motor PWM parameters -->
     <node pkg="autosdv_vehicle_interface" exec="gear_manager" name="gear_manager_node" output="screen">
       <param from="$(find-pkg-share autosdv_vehicle_interface)/params/actuator.yaml"/>
+      <param from="$(var car_param_file)"/>
       <param from="$(find-pkg-share autosdv_vehicle_interface)/params/gear_manager.yaml"/>
     </node>
 
