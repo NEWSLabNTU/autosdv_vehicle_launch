@@ -212,6 +212,27 @@ class AckermannSpeedPID(SpeedPID):
     ``max_pwm_offset`` (optional) is the output limit around ``init_pwm`` in
     counts. Unset, it is ``(max_pwm - min_pwm) // 2`` (55 with actuator.yaml),
     which tops out at PWM 425; set, it is capped at ``max_pwm - init_pwm``.
+
+    ``esc_deadzone_compensation`` (optional, off by default) compensates the
+    ESC's forward dead band, using the car's measured ``forward_start_pwm`` and
+    ``forward_hold_pwm`` (docs/design/esc-pwm-model.md). Without it the PID
+    climbs from ``init_pwm`` through the band on its integrator, the car lurches
+    when it crosses ``forward_start_pwm``, the PID backs off to
+    ``forward_hold_pwm`` or below, where the ESC stops driving, and the car
+    coasts until the climb repeats: a stick-slip limit cycle that retuning only
+    speeds up. With it, for a positive target the PID's zero moves to
+    ``forward_hold_pwm + 1`` and its output cannot go below that, so the ESC
+    keeps driving and the PID only trims above the band; from rest
+    (``measured_speed`` below ``full_stop_threshold``) the command is at least
+    ``forward_start_pwm``, the break-away. A target of zero or below runs the
+    legacy controller unchanged. Enable it per car in that car's actuator
+    profile, ``speed_controller_params: {esc_deadzone_compensation: true}``.
+
+    ``drive_floor_pwm`` (optional, with the compensation) moves the floor up
+    from ``forward_hold_pwm + 1``. The ESC still drives there, but a car's
+    rolling friction can need more: car C decelerates to a stop anywhere in
+    391..396 and only holds speed from about 397. Measure it per car; it must
+    lie above ``forward_hold_pwm`` and below ``forward_start_pwm``.
     """
 
     def __init__(self, params: Dict[str, Any]):
@@ -242,6 +263,25 @@ class AckermannSpeedPID(SpeedPID):
         )
         self.pid.derivative_filter_alpha = params["derivative_filter_alpha"]
 
+        self.deadzone_compensation = bool(params.get("esc_deadzone_compensation", False))
+        if self.deadzone_compensation:
+            forward_start = int(params.get("forward_start_pwm") or 0)
+            forward_hold = int(params.get("forward_hold_pwm") or 0)
+            if not 0 < forward_hold < forward_start:
+                raise ValueError(
+                    "esc_deadzone_compensation needs the car's measured forward_hold_pwm "
+                    f"< forward_start_pwm, got {forward_hold} and {forward_start}")
+            self.drive_floor = int(params.get("drive_floor_pwm") or forward_hold + 1)
+            if not forward_hold < self.drive_floor < forward_start:
+                raise ValueError(
+                    f"drive_floor_pwm {self.drive_floor} must lie in "
+                    f"{forward_hold + 1}..{forward_start - 1}")
+            self.break_away_pwm = forward_start
+            self.stopped_speed = float(params["full_stop_threshold"])
+            # The PID output is counts above the floor, up to the legacy ceiling
+            self.compensated_max_output = max(0, init_pwm + max_pwm_offset - self.drive_floor)
+        self.compensating = False
+
         # Last unrounded PID output, published on ~/debug/control_values
         self.last_output_offset = 0.0
 
@@ -249,11 +289,29 @@ class AckermannSpeedPID(SpeedPID):
         self.pid.reset()
         self.last_output_offset = 0.0
 
+    def _set_compensating(self, on: bool) -> None:
+        """Switch the PID between the legacy range and counts above the floor."""
+        if on == self.compensating:
+            return
+        self.compensating = on
+        self.pid.reset()
+        if on:
+            self.pid.min_output, self.pid.max_output = 0.0, float(self.compensated_max_output)
+        else:
+            self.pid.min_output, self.pid.max_output = -self.max_pwm_offset, self.max_pwm_offset
+
     def update(self, target_speed: float, measured_speed: float, dt: float) -> int:
+        self._set_compensating(self.deadzone_compensation and target_speed > 0)
         self.pid.set_target_point(target_speed)
         pwm_correction = self.pid.run(measured_speed, dt)
-        self.last_output_offset = pwm_correction
-        return self.init_pwm + int(pwm_correction)
+        if not self.compensating:
+            self.last_output_offset = pwm_correction
+            return self.init_pwm + int(pwm_correction)
+        pwm = self.drive_floor + int(pwm_correction)
+        if measured_speed < self.stopped_speed:
+            pwm = max(pwm, self.break_away_pwm)
+        self.last_output_offset = float(pwm - self.init_pwm)
+        return pwm
 
     def debug_terms(self) -> Tuple[float, float, float]:
         """Return the (P, I, D) terms of the last update, for ~/debug/pid_values."""

@@ -61,6 +61,8 @@ SPEED_CONTROLLER_BASE_PARAMS = (
     'init_pwm', 'min_pwm', 'max_pwm', 'brake_pwm', 'rate',
     'kp_speed', 'ki_speed', 'kd_speed', 'integral_limit',
     'enable_conditional_integration', 'derivative_filter_alpha',
+    # the car's ESC dead band, for a controller that compensates it
+    'forward_start_pwm', 'forward_hold_pwm', 'full_stop_threshold',
 )
 
 

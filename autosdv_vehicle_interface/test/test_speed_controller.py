@@ -160,3 +160,63 @@ def test_max_pwm_offset_must_be_positive(bad):
 def test_max_pwm_offset_through_the_loader():
     c = load_speed_controller(None, dict(PARAMS, max_pwm_offset=80))
     assert c.max_pwm_offset == 80
+
+
+# Car C's measured ESC: neutral 385, the band 385..400, held from 391
+COMP = dict(PARAMS, init_pwm=385, forward_start_pwm=400, forward_hold_pwm=390,
+            full_stop_threshold=0.1, esc_deadzone_compensation=True)
+
+
+def test_deadzone_compensation_off_by_default_is_the_legacy_controller():
+    legacy = AckermannSpeedPID(PARAMS)
+    unset = AckermannSpeedPID(dict(PARAMS, forward_start_pwm=400, forward_hold_pwm=390,
+                                   full_stop_threshold=0.1))
+    for measured in (0.0, 0.0, 0.2, 0.6, 0.3):
+        assert unset.update(0.3, measured, 0.02) == legacy.update(0.3, measured, 0.02)
+
+
+def test_deadzone_compensation_breaks_away_from_rest():
+    ctl = AckermannSpeedPID(COMP)
+    assert ctl.update(0.3, 0.0, 0.02) >= 400
+
+
+def test_deadzone_compensation_never_drops_into_the_band_while_moving():
+    ctl = AckermannSpeedPID(COMP)
+    ctl.update(0.3, 0.0, 0.02)
+    # far over target: the legacy PID would command well below 390
+    for _ in range(50):
+        assert ctl.update(0.3, 0.8, 0.02) == 391
+
+
+def test_deadzone_compensation_does_not_wind_down_on_the_floor():
+    ctl = AckermannSpeedPID(COMP)
+    for _ in range(100):
+        ctl.update(0.3, 0.8, 0.02)
+    # back under target: it leaves the floor at once, not after unwinding
+    assert ctl.update(0.3, 0.2, 0.02) > 391
+
+
+def test_deadzone_compensation_zero_target_is_legacy():
+    ctl = AckermannSpeedPID(COMP)
+    legacy = AckermannSpeedPID(dict(PARAMS, init_pwm=385))
+    ctl.update(0.3, 0.4, 0.02)
+    for measured in (0.4, 0.2, 0.0):
+        assert ctl.update(0.0, measured, 0.02) == legacy.update(0.0, measured, 0.02)
+
+
+@pytest.mark.parametrize("start,hold", [(0, 390), (400, 0), (390, 390), (390, 400)])
+def test_deadzone_compensation_needs_the_measured_band(start, hold):
+    with pytest.raises(ValueError):
+        AckermannSpeedPID(dict(COMP, forward_start_pwm=start, forward_hold_pwm=hold))
+
+
+def test_drive_floor_pwm_raises_the_floor():
+    ctl = AckermannSpeedPID(dict(COMP, drive_floor_pwm=397))
+    ctl.update(0.3, 0.0, 0.02)
+    assert ctl.update(0.3, 0.8, 0.02) == 397
+
+
+@pytest.mark.parametrize("floor", [390, 400, 380])
+def test_drive_floor_pwm_must_lie_inside_the_band(floor):
+    with pytest.raises(ValueError):
+        AckermannSpeedPID(dict(COMP, drive_floor_pwm=floor))
