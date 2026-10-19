@@ -23,6 +23,7 @@ import pytest
 import yaml
 
 from autosdv_vehicle_interface import car_profile
+from autosdv_vehicle_interface.longitudinal import check_esc_config, ShellConfig
 
 PARAMS = os.path.join(os.path.dirname(__file__), '..', 'params')
 CONFIG = car_profile.config_dir()
@@ -53,9 +54,20 @@ def test_sim_is_actuator_yaml():
 
     car_a used to be this car; it is measured now, so only sim is pinned to the file."""
     sim = ros_params(car_profile.instance_file('sim', CONFIG))
-    assert sim == {k: BASE[k] for k in sim}
-    # unmodelled: actuator.yaml's ratio (or a launch's stand-in) and its unmeasured ESC points
-    assert not ({'tire_angle_to_steer_ratio'} | ESC_POINTS) & set(sim)
+    pwm = {k: v for k, v in sim.items() if k not in ESC_POINTS}
+    assert pwm == {k: BASE[k] for k in pwm}
+    # unmodelled: actuator.yaml's ratio (or a launch's stand-in)
+    assert 'tire_angle_to_steer_ratio' not in sim
+    # the simulated ESC's own thresholds (the RC sim's plant reads them), all
+    # set, and a profile the shell accepts
+    assert ESC_POINTS <= set(sim)
+    p = {**BASE, **sim}
+    check_esc_config(ShellConfig(init_pwm=p['init_pwm'], min_pwm=p['min_pwm'],
+                                 max_pwm=p['max_pwm'], brake_pwm=p['brake_pwm'],
+                                 full_stop_threshold=p['full_stop_threshold'],
+                                 brake_threshold=p['brake_threshold'],
+                                 velocity_deadband=p['velocity_deadband'],
+                                 **{k: p[k] for k in ESC_POINTS}))
 
 
 # What every car sets. A file left partial would inherit car A's stop PWM.
