@@ -38,11 +38,19 @@ def test_car_a_is_actuator_yaml():
     assert car_a == {k: BASE[k] for k in car_a}
 
 
+# What every car sets. A profile left partial would inherit car A's stop PWM.
+# tire_angle_to_steer_ratio is set only once measured: unset, actuator.yaml's
+# or a launch's stand-in (Lab 2's actuator_param_overrides) applies.
+REQUIRED = {'init_pwm', 'brake_pwm', 'init_steer', 'min_steer', 'max_steer'}
+OPTIONAL = {'tire_angle_to_steer_ratio'}
+
+
 @pytest.mark.parametrize('path', CARS, ids=os.path.basename)
-def test_every_car_sets_the_same_keys(path):
-    """A profile left partial would inherit car A's stop PWM for what it omits."""
-    car_a = ros_params(os.path.join(PARAMS, 'cars', 'car_a.param.yaml'))
-    assert set(ros_params(path)) == set(car_a)
+def test_every_car_sets_its_pwm_points(path):
+    """Each profile sets the PWM points, and only those plus a measured ratio."""
+    keys = set(ros_params(path))
+    assert REQUIRED <= keys, REQUIRED - keys
+    assert keys <= REQUIRED | OPTIONAL, keys - REQUIRED - OPTIONAL
 
 
 @pytest.mark.parametrize('path', CARS, ids=os.path.basename)

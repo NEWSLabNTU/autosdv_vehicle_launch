@@ -4,7 +4,7 @@
 #
 # A car profile holds what differs between physical cars -- the ESC's neutral
 # and brake points, the steering servo's centre and ends, a measured steering
-# ratio -- and nothing else. vehicle_interface.launch.xml takes
+# ratio (only once measured) -- and nothing else. vehicle_interface.launch.xml takes
 # car_profile:=<name> (the actuator refuses to start without one) and loads
 # params/cars/<name>.param.yaml last, after
 # actuator.yaml and any per-launch actuator_param_overrides, so a measured value
@@ -21,6 +21,7 @@
     min_steer: 439
     max_steer: 539
 
-    # Saturates the servo at 0.05 rad (known-config-defects.md section 8);
-    # not measured.
-    tire_angle_to_steer_ratio: -1000.0
+    # No tire_angle_to_steer_ratio: car A's is not measured, so actuator.yaml's
+    # -1000 applies (it saturates the servo at 0.05 rad, known-config-defects.md
+    # section 8), or a launch's stand-in such as Lab 2's -143. Set it here once
+    # `just lab2 steer-fit` has measured it; then it wins over both.
