@@ -225,8 +225,8 @@ class AckermannSpeedPID(SpeedPID):
     keeps driving and the PID only trims above the band; from rest
     (``measured_speed`` below ``full_stop_threshold``) the command is at least
     ``forward_start_pwm``, the break-away. A target of zero or below runs the
-    legacy controller unchanged. Enable it per car in that car's actuator
-    profile, ``speed_controller_params: {esc_deadzone_compensation: true}``.
+    legacy controller unchanged. A car enables it in its individual_params
+    ``speed_controller.param.yaml``, with ``drive_floor_pwm`` and its gains.
 
     ``drive_floor_pwm`` (optional, with the compensation) moves the floor up
     from ``forward_hold_pwm + 1``. The ESC still drives there, but a car's
@@ -281,6 +281,7 @@ class AckermannSpeedPID(SpeedPID):
             # The PID output is counts above the floor, up to the legacy ceiling
             self.compensated_max_output = max(0, init_pwm + max_pwm_offset - self.drive_floor)
         self.compensating = False
+        self.integral_at_rest = None
 
         # Last unrounded PID output, published on ~/debug/control_values
         self.last_output_offset = 0.0
@@ -288,6 +289,7 @@ class AckermannSpeedPID(SpeedPID):
     def reset(self) -> None:
         self.pid.reset()
         self.last_output_offset = 0.0
+        self.integral_at_rest = None
 
     def _set_compensating(self, on: bool) -> None:
         """Switch the PID between the legacy range and counts above the floor."""
@@ -295,6 +297,7 @@ class AckermannSpeedPID(SpeedPID):
             return
         self.compensating = on
         self.pid.reset()
+        self.integral_at_rest = None
         if on:
             self.pid.min_output, self.pid.max_output = 0.0, float(self.compensated_max_output)
         else:
@@ -303,13 +306,23 @@ class AckermannSpeedPID(SpeedPID):
     def update(self, target_speed: float, measured_speed: float, dt: float) -> int:
         self._set_compensating(self.deadzone_compensation and target_speed > 0)
         self.pid.set_target_point(target_speed)
+        at_rest = self.compensating and measured_speed < self.stopped_speed
+        if at_rest and self.integral_at_rest is None:
+            self.integral_at_rest = self.pid.integral
         pwm_correction = self.pid.run(measured_speed, dt)
         if not self.compensating:
             self.last_output_offset = pwm_correction
             return self.init_pwm + int(pwm_correction)
-        pwm = self.drive_floor + int(pwm_correction)
-        if measured_speed < self.stopped_speed:
-            pwm = max(pwm, self.break_away_pwm)
+        if not at_rest:
+            self.integral_at_rest = None
+        if at_rest:
+            # Exactly the break-away, plus what the integrator gains while the
+            # car stays put. The P term on top made it 403 on car C, and the
+            # car lurched to 0.87 for a 0.6 target with the PID already at
+            # the floor.
+            pwm = self.break_away_pwm + int(max(0.0, self.pid.integral - self.integral_at_rest))
+        else:
+            pwm = self.drive_floor + int(pwm_correction)
         self.last_output_offset = float(pwm - self.init_pwm)
         return pwm
 

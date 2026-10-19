@@ -220,3 +220,13 @@ def test_drive_floor_pwm_raises_the_floor():
 def test_drive_floor_pwm_must_lie_inside_the_band(floor):
     with pytest.raises(ValueError):
         AckermannSpeedPID(dict(COMP, drive_floor_pwm=floor))
+
+
+def test_deadzone_compensation_breaks_away_at_exactly_forward_start():
+    ctl = AckermannSpeedPID(COMP)
+    # a large error would put P well above the break-away; at rest it does not count
+    assert ctl.update(1.5, 0.0, 0.02) == 400
+    for _ in range(100):                # stuck for 2 s: the integrator raises it
+        stuck = ctl.update(1.5, 0.0, 0.02)
+    assert stuck > 400
+

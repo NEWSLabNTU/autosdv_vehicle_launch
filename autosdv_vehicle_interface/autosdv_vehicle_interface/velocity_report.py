@@ -35,6 +35,8 @@ class AutoSdvVelocityReportNode(Node):
         self.declare_parameter("markers_per_rotation", Parameter.Type.INTEGER)
         self.declare_parameter("frame_id", Parameter.Type.STRING)
         self.declare_parameter('hardware', HARDWARE_REAL)
+        # 1 = each edge gap alone; 3 rejects a late GPIO callback (velocity_estimator.py)
+        self.declare_parameter('gap_median_window', 1)
 
         self.publisher = self.create_publisher(VelocityReport, '~/output/velocity_status', 1)
 
@@ -46,7 +48,9 @@ class AutoSdvVelocityReportNode(Node):
         )
         self.frame_id = self.get_parameter('frame_id').get_parameter_value().string_value
         self.distance_per_marker = wheel_circumference_meters / self.markers_per_rotation
-        self.estimator = VelocityEstimator(self.distance_per_marker)
+        self.estimator = VelocityEstimator(
+            self.distance_per_marker,
+            gap_median=self.get_parameter('gap_median_window').get_parameter_value().integer_value)
         self.clock = self.get_clock()
 
         # The hall sensor: Jetson.GPIO on the car, the rc_sim plant's edges in simulation

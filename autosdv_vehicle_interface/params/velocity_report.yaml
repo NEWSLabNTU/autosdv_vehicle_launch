@@ -14,3 +14,8 @@
 
     # The frame ID marked on output messages
     frame_id: "base_link"
+
+    # Median over this many edge gaps (1 = each gap alone). An edge is timed
+    # when its GPIO callback runs, so a late callback makes a long gap and then
+    # a short one that reads far too fast; 3 rejects that pair.
+    gap_median_window: 3

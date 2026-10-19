@@ -14,9 +14,16 @@ to the node's ``(now - last).nanoseconds / 10**9``.
   ``overdue_slack * distance_per_marker / since``. Without it the estimate
   holds its last value until the timeout after the wheel stops.
 - No edge for ``timeout`` seconds: zero.
+- ``gap_median`` (1 = off): the gap is the median of the last N edge gaps.
+  The node times an edge when its GPIO callback runs, so one late callback
+  makes a long gap followed by a short one, and the short one reads far too
+  fast (car C: 0.5 -> 0.88 m/s at a steady PWM, which the controller answers
+  by slowing the car). A median of 3 rejects that pair.
 
 The sensor has no direction: the result is never negative.
 """
+from collections import deque
+import statistics
 from typing import Optional
 
 
@@ -26,8 +33,12 @@ class VelocityEstimator:
     MIN_EDGE_DT = 0.001  # [s] shorter gaps are noise (about 27 m/s for this wheel)
 
     def __init__(self, distance_per_marker: float, alpha: float = 0.3,
-                 timeout: float = 0.5, overdue_slack: float = 1.5):
+                 timeout: float = 0.5, overdue_slack: float = 1.5,
+                 gap_median: int = 1):
+        if gap_median < 1:
+            raise ValueError(f'gap_median must be at least 1, got {gap_median}')
         self.distance_per_marker = distance_per_marker
+        self.gaps: deque = deque(maxlen=gap_median)
         self.alpha = alpha
         self.timeout = timeout
         self.overdue_slack = overdue_slack
@@ -49,7 +60,8 @@ class VelocityEstimator:
         if self.last_edge_ns is not None:
             dt = (t_ns - self.last_edge_ns) / (10**9)
             if dt > self.MIN_EDGE_DT:
-                instantaneous = self.distance_per_marker / dt
+                self.gaps.append(dt)
+                instantaneous = self.distance_per_marker / statistics.median(self.gaps)
                 # Start from the capped estimate, so a slowdown the cap already
                 # showed does not bounce back up through the EMA
                 self.current_velocity = self.gap_bound(t_ns)
@@ -67,4 +79,6 @@ class VelocityEstimator:
         if self.last_edge_ns is not None:
             if (now_ns - self.last_edge_ns) / (10**9) > self.timeout:
                 self.current_velocity = 0.0
+                # a stop: the next run starts from fresh gaps
+                self.gaps.clear()
         return self.gap_bound(now_ns)
