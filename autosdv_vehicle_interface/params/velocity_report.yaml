@@ -1,7 +1,9 @@
 /**:
   ros__parameters:
-    # The input GPIO pin number.
-    pin: 15
+    # The input GPIO pin number (BOARD numbering). Every car since
+    # 2026-10-27, when car A's pin 15 stopped delivering edges (AutoSDV:
+    # scripts/testing/speed_control/README.md).
+    pin: 16
     
     # The wheel diameter in centimeters.
     wheel_diameter: 10.5
