@@ -10,7 +10,8 @@ mode except ACTIVE is decided here, and the plug-in speed controller (see
 mode               when                                        motor PWM
 =================  ==========================================  ==============
 OVERRIDE_BRAKE     emergency / command timeout / stale         ``brake_pwm``
-                   velocity / controller fault, still moving
+                   velocity / controller fault / wheel speed
+                   fault, still moving
 OVERRIDE_NEUTRAL   the same, once stopped or the brake time    ``init_pwm``
                    is used up
 WAITING            no command or no velocity received yet      ``init_pwm``
@@ -21,6 +22,21 @@ COAST              target ~ 0 and measured between the two     ``init_pwm``
 DEADBAND_HOLD      ``|error| < velocity_deadband``             last PWM
 ACTIVE             otherwise                                   plug-in, clamped
 =================  ==========================================  ==============
+
+The wheel speed fault (``wheel_speed_check_enabled``) is the one override the
+shell raises from what it observes rather than from an input. A velocity
+report can be fresh and still wrong: a hall sensor that is unplugged, on the
+wrong pin or out of its magnet's reach reports 0.0 at its usual rate, and the
+plug-in, seeing the car stopped, raises the throttle to ``max_pwm`` (Lab 2,
+car B, 2026-10-27: 404 to 445 in six seconds, into a wall). So the shell
+watches its own output: driven at ``forward_start_pwm +
+wheel_speed_check_pwm_margin`` or above for ``wheel_speed_check_time`` while
+the measured speed stays below ``wheel_speed_check_min_speed``, it latches the
+override. The latch clears once the command has been a stop for
+``WHEEL_FAULT_CLEAR_TIME`` (a disengage), or when the check is turned off.
+Turn it off (the actuator's ``wheel_speed_check_enabled``, settable while it
+runs) for work that drives the motor while the wheel speed legitimately stays
+near zero, such as a lifted car under inspection.
 
 BRAKE, FULL_STOP, DEADBAND_HOLD and ACTIVE are the modes the actuator has
 always had, reproduced exactly; ``test/test_speed_controller_equivalence.py``
@@ -78,6 +94,7 @@ OVERRIDE_EMERGENCY = "emergency"
 OVERRIDE_COMMAND_TIMEOUT = "command_timeout"
 OVERRIDE_VELOCITY_TIMEOUT = "velocity_timeout"
 OVERRIDE_CONTROLLER_FAULT = "controller_fault"
+OVERRIDE_WHEEL_SPEED = "wheel_speed"
 
 
 class EscState(Enum):
@@ -162,6 +179,14 @@ class ShellConfig:
         reverse_start_pwm, reverse_arm_pwm: the car's ESC thresholds (see the
             module docstring); 0 = not measured, which leaves the shell as it
             always was.
+        wheel_speed_check_enabled: Stop the motor when it is driven forward
+            but the wheel speed stays at zero (see :meth:`LongitudinalShell.step`).
+            Needs ``forward_start_pwm``; off here, on in the actuator node.
+        wheel_speed_check_pwm_margin: Counts above ``forward_start_pwm`` that
+            count as driving the motor
+        wheel_speed_check_time: How long the motor may be driven with the wheel
+            speed below ``wheel_speed_check_min_speed`` [s]
+        wheel_speed_check_min_speed: Measured |speed| that counts as motion [m/s]
     """
 
     init_pwm: int
@@ -181,6 +206,10 @@ class ShellConfig:
     reverse_stop_pwm: int = 0
     reverse_start_pwm: int = 0
     reverse_arm_pwm: int = 0
+    wheel_speed_check_enabled: bool = False
+    wheel_speed_check_pwm_margin: int = 10
+    wheel_speed_check_time: float = 1.0
+    wheel_speed_check_min_speed: float = 0.05
 
 
 def check_esc_config(cfg: ShellConfig) -> None:
@@ -226,6 +255,9 @@ class LongitudinalShell:
     # Speed below which the vehicle may change direction [m/s]
     STANDING_STILL_EPSILON = 0.1
 
+    # How long a stop command must last before a wheel speed fault clears [s]
+    WHEEL_FAULT_CLEAR_TIME = 1.0
+
     def __init__(self, config: ShellConfig, controller, logger=None):
         if config.dt_source not in (DT_SOURCE_VELOCITY_REPORT, DT_SOURCE_LOOP):
             raise ValueError(
@@ -262,6 +294,16 @@ class LongitudinalShell:
         self.fault_latched = False
         self._fault_until: Optional[float] = None
 
+        # Wheel speed check: when the motor began to be driven without motion,
+        # whether the fault is latched, and when the stop that clears it began
+        self.wheel_fault_latched = False
+        self._driven_still_since: Optional[float] = None
+        self._stop_command_since: Optional[float] = None
+        if config.wheel_speed_check_enabled and config.forward_start_pwm <= 0:
+            self.logger.warning(
+                "Wheel speed check is off: it needs the car's forward_start_pwm, "
+                "which is not measured (0)")
+
     # ------------------------------------------------------------------ step
 
     def step(
@@ -295,6 +337,9 @@ class LongitudinalShell:
         if override is None and self._controller_faulted(now):
             override = OVERRIDE_CONTROLLER_FAULT
 
+        if override is None and self._wheel_speed_faulted(now, target_speed):
+            override = OVERRIDE_WHEEL_SPEED
+
         if override is None and self.override_reason is not None:
             if not self._resume(now):
                 override = OVERRIDE_CONTROLLER_FAULT
@@ -305,9 +350,21 @@ class LongitudinalShell:
             pwm = self._run_control(now, target_speed, current_speed, dt)
 
         pwm = self._guard_reverse(pwm, target_speed if override is None else None)
+        self._check_wheel_speed(now, pwm, current_speed)
         self.esc.update(pwm)
         self.last_output_pwm = pwm
         return pwm
+
+    def set_wheel_speed_check(self, enabled: bool) -> None:
+        """Turn the wheel speed check on or off at run time; off clears a latched fault."""
+        self.config.wheel_speed_check_enabled = bool(enabled)
+        self._driven_still_since = None
+        self._stop_command_since = None
+        if not enabled and self.wheel_fault_latched:
+            self.wheel_fault_latched = False
+            self.logger.warning("Wheel speed check turned off: the latched fault is cleared")
+        else:
+            self.logger.info(f"Wheel speed check {'on' if enabled else 'off'}")
 
     @property
     def esc_state(self) -> EscState:
@@ -478,6 +535,54 @@ class LongitudinalShell:
         return True
 
     # --------------------------------------------------------------- faults
+
+    def _wheel_check_active(self) -> bool:
+        cfg = self.config
+        return cfg.wheel_speed_check_enabled and cfg.forward_start_pwm > 0
+
+    def _check_wheel_speed(self, now: float, pwm: int, current_speed: Optional[float]) -> None:
+        """Latch the wheel speed fault when this tick's PWM drives a car that does not move."""
+        cfg = self.config
+        if not self._wheel_check_active() or self.wheel_fault_latched:
+            self._driven_still_since = None
+            return
+        driven = pwm >= cfg.forward_start_pwm + cfg.wheel_speed_check_pwm_margin
+        still = current_speed is not None and abs(current_speed) < cfg.wheel_speed_check_min_speed
+        if not (driven and still):
+            self._driven_still_since = None
+            return
+        if self._driven_still_since is None:
+            self._driven_still_since = now
+            return
+        if now - self._driven_still_since >= cfg.wheel_speed_check_time:
+            self.wheel_fault_latched = True
+            self._driven_still_since = None
+            self._stop_command_since = None
+            self.logger.error(
+                f"Wheel speed fault: motor at {pwm} (>= "
+                f"{cfg.forward_start_pwm + cfg.wheel_speed_check_pwm_margin}) for "
+                f"{cfg.wheel_speed_check_time:.1f} s while the wheel speed reads "
+                f"{current_speed:.3f} m/s. Is the hall sensor connected, and on the "
+                f"configured pin? Motor held stopped until the command is a stop for "
+                f"{self.WHEEL_FAULT_CLEAR_TIME:.1f} s (disengage), or "
+                f"wheel_speed_check_enabled is set false")
+
+    def _wheel_speed_faulted(self, now: float, target_speed: Optional[float]) -> bool:
+        """Report whether the fault is latched; clear it after a long enough stop command."""
+        if not self.wheel_fault_latched:
+            return False
+        stop = target_speed is None or abs(target_speed) < self.config.full_stop_threshold
+        if not stop:
+            self._stop_command_since = None
+            return True
+        if self._stop_command_since is None:
+            self._stop_command_since = now
+        if now - self._stop_command_since < self.WHEEL_FAULT_CLEAR_TIME:
+            return True
+        self.wheel_fault_latched = False
+        self._stop_command_since = None
+        self.logger.info("Wheel speed fault cleared by a stop command")
+        return False
 
     def _controller_faulted(self, now: float) -> bool:
         if self.fault_latched:

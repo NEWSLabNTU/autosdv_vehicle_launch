@@ -58,6 +58,22 @@
     # [rad] commands smaller than this stay centred when steer_deadband is set
     steer_deadband_min_angle: 0.01
 
+    ## Wheel speed check (longitudinal.py): a motor driven at forward_start_pwm +
+    # wheel_speed_check_pwm_margin or above for wheel_speed_check_time while
+    # the wheel speed reads below wheel_speed_check_min_speed is a hall sensor
+    # that is not reporting (unplugged, wrong pin): the actuator stops the motor
+    # and holds it stopped until the command has been a stop for 1 s
+    # (disengage). Needs the car's forward_start_pwm. Turn it off for a lifted
+    # car whose wheel speed stays near zero, also while the actuator runs:
+    #   ros2 param set /autosdv/actuator_node wheel_speed_check_enabled false
+    wheel_speed_check_enabled: true
+    # [PWM counts] above forward_start_pwm that count as driving the motor
+    wheel_speed_check_pwm_margin: 10
+    # [s] how long the motor may be driven with no wheel speed
+    wheel_speed_check_time: 1.0
+    # [m/s] measured |speed| below this counts as no motion
+    wheel_speed_check_min_speed: 0.05
+
     # Brake threshold - minimum speed to trigger active braking when target is zero
     brake_threshold: 0.2  # m/s - threshold for considering significant motion
 

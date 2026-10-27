@@ -227,6 +227,18 @@ def test_stale_velocity_stops_the_motor(make_node, last_speed, expected):
     assert motor == expected  # judged by the last reading before the lapse
 
 
+def test_wheel_speed_check_switch_at_run_time(make_node):
+    node = make_node(forward_start_pwm=INIT_PWM + 5)
+    assert node.longitudinal.config.wheel_speed_check_enabled  # on by default
+    node.longitudinal.wheel_fault_latched = True
+    result = node.set_parameters([Parameter('wheel_speed_check_enabled', value=False)])
+    assert result[0].successful
+    assert not node.longitudinal.config.wheel_speed_check_enabled
+    assert not node.longitudinal.wheel_fault_latched
+    result = node.set_parameters([Parameter('wheel_speed_check_enabled', value='no')])
+    assert not result[0].successful
+
+
 def test_student_controller_selected_by_parameter(make_node):
     node = make_node(
         speed_controller_class="autosdv_vehicle_interface.speed_controller:SpeedPID",

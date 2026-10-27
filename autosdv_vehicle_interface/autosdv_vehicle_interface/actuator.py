@@ -23,6 +23,7 @@ from autosdv_vehicle_interface.actuator_core import (  # noqa: F401  (State, Con
     Config,
     DEFAULTS,
     State,
+    WHEEL_SPEED_CHECK_KEYS,
 )
 from autosdv_vehicle_interface.longitudinal import ESC_PWM_KEYS
 from autosdv_vehicle_interface.hal import (
@@ -53,6 +54,7 @@ from autoware_adapi_v1_msgs.msg import MrmState
 from autoware_control_msgs.msg import Control
 from autoware_internal_debug_msgs.msg import Float32MultiArrayStamped
 from autoware_vehicle_msgs.msg import VelocityReport
+from rcl_interfaces.msg import SetParametersResult
 import rclpy
 from rclpy import Parameter
 from rclpy.clock import Clock, ClockType
@@ -112,6 +114,7 @@ class AutoSdvActuator(Node):
 
         # Initialize safety settings (emergency inputs)
         self.initialize_safety(parameter_values)
+        self.add_on_set_parameters_callback(self._on_set_parameters)
 
         # Initialize hardware
         self.driver = self.initialize_pwm_driver(parameter_values)
@@ -234,6 +237,10 @@ class AutoSdvActuator(Node):
         # The car's ESC thresholds; 0 = not measured
         for name in ESC_PWM_KEYS + ('esc_deadzone_compensation', 'drive_floor_pwm',
                                     'steer_deadband', 'steer_deadband_min_angle'):
+            self.declare_parameter(name, DEFAULTS[name])
+        # The wheel speed check (longitudinal.py); wheel_speed_check_enabled may
+        # also be set while the node runs (_on_set_parameters)
+        for name in WHEEL_SPEED_CHECK_KEYS:
             self.declare_parameter(name, DEFAULTS[name])
         self.declare_parameter('enable_emergency_input', DEFAULTS['enable_emergency_input'])
         self.declare_parameter('emergency_stop_on_any_mrm', DEFAULTS['emergency_stop_on_any_mrm'])
@@ -394,6 +401,7 @@ class AutoSdvActuator(Node):
             "drive_floor_pwm",
             "steer_deadband",
             "steer_deadband_min_angle",
+            *WHEEL_SPEED_CHECK_KEYS,
         ):
             params[name] = self.get_parameter(name).value
         params["speed_controller_params"] = self._speed_controller_params_text()
@@ -856,6 +864,16 @@ class AutoSdvActuator(Node):
             self.publish_debug_pwm_values(pwm_value, steer_value)
             self.publish_debug_pid_values()
         return pwm_value, steer_value
+
+    def _on_set_parameters(self, parameters) -> SetParametersResult:
+        """Apply wheel_speed_check_enabled at run time; the other parameters are read at start."""
+        for param in parameters:
+            if param.name == 'wheel_speed_check_enabled':
+                if param.type_ != Parameter.Type.BOOL:
+                    return SetParametersResult(
+                        successful=False, reason='wheel_speed_check_enabled must be a bool')
+                self.longitudinal.set_wheel_speed_check(param.value)
+        return SetParametersResult(successful=True)
 
     def reset_controllers(self) -> None:
         """Reset the speed controller to its initial state."""

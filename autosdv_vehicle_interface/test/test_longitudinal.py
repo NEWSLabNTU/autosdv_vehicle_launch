@@ -18,6 +18,7 @@ from autosdv_vehicle_interface.longitudinal import (
     OVERRIDE_COMMAND_TIMEOUT,
     OVERRIDE_CONTROLLER_FAULT,
     OVERRIDE_EMERGENCY,
+    OVERRIDE_WHEEL_SPEED,
     ShellConfig,
 )
 import pytest
@@ -251,3 +252,92 @@ def test_max_faults_zero_never_latches():
     for k in range(10):
         shell.step(k * 0.6, 1.0, 0.5, 0.0)
     assert shell.fault_count == 10 and not shell.fault_latched
+
+
+# ---------------------------------------------------------- wheel speed check
+
+FWD = 395   # forward_start_pwm; the check's threshold is FWD + 10
+
+
+def wheel_shell(value=420, logger=None, **kw):
+    kw.setdefault("wheel_speed_check_enabled", True)
+    return make(Scripted(value), logger=logger, forward_start_pwm=FWD, **kw)
+
+
+def drive(shell, t0, t1, speed, target=0.8, dt=0.01):
+    """Step from t0 to t1; return the PWMs."""
+    out = []
+    for k in range(int(round((t1 - t0) / dt))):
+        out.append(shell.step(t0 + k * dt, target, speed, t0 + k * dt))
+    return out
+
+
+def test_wheel_speed_check_trips_on_a_dead_sensor(logger):
+    shell, _ = wheel_shell(logger=logger)
+    out = drive(shell, 0.0, 0.99, 0.0)
+    assert set(out) == {420}                       # within wheel_speed_check_time
+    out = drive(shell, 0.99, 1.2, 0.0)
+    assert shell.wheel_fault_latched
+    assert shell.override_reason == OVERRIDE_WHEEL_SPEED
+    assert out[-1] == INIT                          # neutral: the reading says stopped
+    assert len(logger.at("error")) == 1
+
+
+def test_wheel_speed_check_quiet_while_the_car_moves():
+    shell, _ = wheel_shell()
+    out = drive(shell, 0.0, 5.0, 0.6)
+    assert set(out) == {420} and not shell.wheel_fault_latched
+
+
+def test_wheel_speed_check_ignores_pwm_below_the_threshold():
+    # a slow start sitting at forward_start + 9 never trips
+    shell, _ = wheel_shell(value=FWD + 9)
+    drive(shell, 0.0, 5.0, 0.0)
+    assert not shell.wheel_fault_latched
+
+
+def test_wheel_speed_check_needs_the_whole_window():
+    # motion for one tick restarts the window
+    shell, _ = wheel_shell()
+    drive(shell, 0.0, 0.8, 0.0)
+    drive(shell, 0.8, 0.81, 0.3)
+    drive(shell, 0.81, 1.6, 0.0)
+    assert not shell.wheel_fault_latched
+
+
+def test_wheel_speed_fault_holds_until_a_stop_command():
+    shell, ctl = wheel_shell()
+    drive(shell, 0.0, 1.2, 0.0)
+    assert set(drive(shell, 1.2, 10.0, 0.0)) == {INIT}      # still commanded 0.8: held
+    drive(shell, 10.0, 10.9, 0.0, target=0.0)               # stop, not long enough
+    assert shell.wheel_fault_latched
+    drive(shell, 10.9, 11.2, 0.0, target=0.0)
+    assert not shell.wheel_fault_latched
+    assert shell.step(11.3, 0.8, 0.5, 11.3) == 420           # re-engaged: control resumes
+    assert shell.override_reason is None and ctl.resets == 1
+
+
+def test_wheel_speed_check_off_by_parameter():
+    shell, _ = wheel_shell(wheel_speed_check_enabled=False)
+    out = drive(shell, 0.0, 5.0, 0.0)
+    assert set(out) == {420} and not shell.wheel_fault_latched
+
+
+def test_wheel_speed_check_off_without_forward_start(logger):
+    shell, _ = make(Scripted(420), logger=logger, wheel_speed_check_enabled=True)
+    drive(shell, 0.0, 5.0, 0.0)
+    assert not shell.wheel_fault_latched
+    assert any("forward_start_pwm" in m for m in logger.at("warning"))
+
+
+def test_wheel_speed_check_turned_off_at_run_time_clears_the_fault():
+    shell, _ = wheel_shell()
+    drive(shell, 0.0, 1.2, 0.0)
+    assert shell.wheel_fault_latched
+    shell.set_wheel_speed_check(False)
+    assert not shell.wheel_fault_latched
+    out = drive(shell, 1.2, 5.0, 0.0)
+    assert out[-1] == 420 and shell.override_reason is None
+    shell.set_wheel_speed_check(True)
+    drive(shell, 5.0, 6.2, 0.0)
+    assert shell.wheel_fault_latched

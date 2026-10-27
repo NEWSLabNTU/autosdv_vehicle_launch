@@ -54,7 +54,17 @@ DEFAULTS: Dict[str, Any] = {
     # The steering servo's dead band around init_steer, per car (0 = none)
     'steer_deadband': 0,
     'steer_deadband_min_angle': 0.01,
+    # Stop the motor when it is driven but the wheel speed reads zero
+    # (longitudinal.py); on for every car, off for a lifted-car inspection
+    'wheel_speed_check_enabled': True,
+    'wheel_speed_check_pwm_margin': 10,
+    'wheel_speed_check_time': 1.0,
+    'wheel_speed_check_min_speed': 0.05,
 }
+
+# The wheel speed check's parameters, in DEFAULTS
+WHEEL_SPEED_CHECK_KEYS = ('wheel_speed_check_enabled', 'wheel_speed_check_pwm_margin',
+                          'wheel_speed_check_time', 'wheel_speed_check_min_speed')
 
 # vehicle_info.param.yaml's names -> the names this code uses
 FILE_KEY_RENAMES = {
@@ -206,6 +216,10 @@ def make_shell_config(params: Dict[str, Any]) -> ShellConfig:
         controller_max_faults=params['controller_max_faults'],
         dt_source=params['speed_controller_dt_source'],
         **{key: int(params[key]) for key in ESC_PWM_KEYS},
+        wheel_speed_check_enabled=bool(params['wheel_speed_check_enabled']),
+        wheel_speed_check_pwm_margin=int(params['wheel_speed_check_pwm_margin']),
+        wheel_speed_check_time=float(params['wheel_speed_check_time']),
+        wheel_speed_check_min_speed=float(params['wheel_speed_check_min_speed']),
     )
 
 
