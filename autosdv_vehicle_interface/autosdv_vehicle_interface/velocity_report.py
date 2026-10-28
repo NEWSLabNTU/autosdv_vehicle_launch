@@ -4,10 +4,13 @@ Velocity report node for AutoSDV.
 
 Measures the vehicle's speed from a rear wheel's hall-sensor edges. The
 arithmetic is VelocityEstimator's (velocity_estimator.py), shared with the
-rc_sim lockstep grader; this node supplies the edges and the clock.
+rc_sim lockstep grader; this node supplies one edge per magnet and the clock.
 
-``hardware``: ``real`` (Jetson.GPIO, the default) or ``sim`` (SimGPIO: edges
-from the autosdv_rc_sim plant, each carrying its true time). In sim the node
+``hardware``: ``real`` (the default) or ``sim`` (SimGPIO: edges from the
+autosdv_rc_sim plant, each carrying its true time). On the car the edges come
+from hall_sensor.GpioBurstReader: the sensor chatters at each switch and
+switches twice per magnet, so it counts one burst per magnet (the one that
+settles at ``active_level``), timed at the burst's first edge by the kernel. In sim the node
 also acknowledges each report on the plant's clock handshake (hal.py,
 LockstepParticipant) after publishing it.
 """
@@ -16,11 +19,19 @@ import sys
 
 from autosdv_vehicle_interface.hal import (
     HARDWARE_REAL, make_gpio, make_lockstep_participant, timer_deadline_ns, VELOCITY_REPORT)
+from autosdv_vehicle_interface.hall_sensor import (
+    DEFAULT_ACTIVE_LEVEL, DEFAULT_BURST_GAP, GpioBurstReader)
 from autosdv_vehicle_interface.velocity_estimator import VelocityEstimator
 from autoware_vehicle_msgs.msg import VelocityReport
 import rclpy
 from rclpy import Parameter
 from rclpy.node import Node
+
+
+def make_burst_reader(pin, on_marker, clock_ns, burst_gap, active_level):
+    """The car's hall-sensor reader (a seam: tests replace it)."""
+    return GpioBurstReader(pin, on_marker, clock_ns, burst_gap=burst_gap,
+                           active_level=active_level)
 
 
 class AutoSdvVelocityReportNode(Node):
@@ -37,6 +48,10 @@ class AutoSdvVelocityReportNode(Node):
         self.declare_parameter('hardware', HARDWARE_REAL)
         # 1 = each edge gap alone; 3 rejects a late GPIO callback (velocity_estimator.py)
         self.declare_parameter('gap_median_window', 1)
+        # real only: quiet time [s] that ends an edge burst, and the level a burst
+        # settles at when a magnet arrives (hall_sensor.py)
+        self.declare_parameter('burst_gap', DEFAULT_BURST_GAP)
+        self.declare_parameter('active_level', DEFAULT_ACTIVE_LEVEL)
 
         self.publisher = self.create_publisher(VelocityReport, '~/output/velocity_status', 1)
 
@@ -53,12 +68,23 @@ class AutoSdvVelocityReportNode(Node):
             gap_median=self.get_parameter('gap_median_window').get_parameter_value().integer_value)
         self.clock = self.get_clock()
 
-        # The hall sensor: Jetson.GPIO on the car, the rc_sim plant's edges in simulation
+        # The hall sensor: one burst per magnet on the car, the rc_sim plant's edges in simulation
         self.pin = self.get_parameter('pin').get_parameter_value().integer_value
-        self.gpio = make_gpio(self.get_parameter('hardware').value, node=self)
-        self.gpio.setmode(self.gpio.BOARD)
-        self.gpio.setup(self.pin, self.gpio.IN)
-        self.gpio.add_event_detect(self.pin, self.gpio.RISING, callback=self.on_gpio_rising)
+        self.reader = None
+        if self.get_parameter('hardware').value == HARDWARE_REAL:
+            self.reader = make_burst_reader(
+                self.pin, lambda stamp_ns: self.on_gpio_rising(self.pin, stamp_ns),
+                lambda: self.clock.now().nanoseconds,
+                burst_gap=self.get_parameter('burst_gap').value,
+                active_level=self.get_parameter('active_level').value)
+            self.gpio = None
+            self.get_logger().info(f'hall sensor: {self.reader.description}, one count per burst '
+                                   f'settling at {self.get_parameter("active_level").value}')
+        else:
+            self.gpio = make_gpio(self.get_parameter('hardware').value, node=self)
+            self.gpio.setmode(self.gpio.BOARD)
+            self.gpio.setup(self.pin, self.gpio.IN)
+            self.gpio.add_event_detect(self.pin, self.gpio.RISING, callback=self.on_gpio_rising)
 
         rate = self.get_parameter('rate').get_parameter_value().double_value
         self.timer = self.create_timer(1.0 / rate, self.publish_callback)
@@ -126,8 +152,8 @@ class AutoSdvVelocityReportNode(Node):
 
         Args:
             channel: GPIO channel that triggered the event
-            stamp_ns: The edge's true time [ns], from a simulated backend; the
-                real GPIO callback passes none and the edge is timed on arrival.
+            stamp_ns: The edge's time [ns]: the burst's first edge on the car,
+                the true time from a simulated backend; None times it on arrival.
         """
         if stamp_ns is None:
             stamp_ns = self.clock.now().nanoseconds
@@ -149,6 +175,8 @@ def main():
         pass
     finally:
         # Destroy the node explicitly
+        if node.reader is not None:
+            node.reader.close()
         node.destroy_node()
         rclpy.shutdown()
 

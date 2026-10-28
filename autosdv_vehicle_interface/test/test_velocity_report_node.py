@@ -126,19 +126,19 @@ def test_sim_acknowledges_each_report_after_publishing_it(ros):
 
 
 def test_real_hardware_publishes_no_ack(ros, monkeypatch):
-    class FakeGPIO:
-        BOARD, IN, RISING = 'BOARD', 'IN', 'RISING'
+    made = {}
 
-        def setmode(self, mode):
+    class FakeReader:
+        description = 'fake pin'
+
+        def __init__(self, pin, on_marker, clock_ns, burst_gap, active_level):
+            made.update(pin=pin, on_marker=on_marker, burst_gap=burst_gap,
+                        active_level=active_level)
+
+        def close(self):
             pass
 
-        def setup(self, pin, direction):
-            pass
-
-        def add_event_detect(self, pin, edge, callback):
-            pass
-
-    monkeypatch.setattr(velocity_report, 'make_gpio', lambda hardware, node=None: FakeGPIO())
+    monkeypatch.setattr(velocity_report, 'make_burst_reader', FakeReader)
     params = dict(PARAMS, hardware='real')
     node = velocity_report.AutoSdvVelocityReportNode(
         parameter_overrides=[Parameter(k, value=v) for k, v in params.items()])
@@ -146,6 +146,12 @@ def test_real_hardware_publishes_no_ack(ros, monkeypatch):
         assert node.lockstep is None
         assert not [t for t, _ in node.get_publisher_names_and_types_by_node(
             node.get_name(), node.get_namespace()) if t == hal.LOCKSTEP_ACK_TOPIC]
+        # one marker per reported burst, at the burst's own time
+        assert made['burst_gap'] == 0.001 and made['active_level'] == 0
+        made['on_marker'](1_000_000_000)
+        made['on_marker'](1_100_000_000)
+        assert node.estimator.current_velocity == pytest.approx(
+            node.distance_per_marker / 0.1)
     finally:
         node.destroy_node()
 

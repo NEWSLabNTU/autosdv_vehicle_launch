@@ -21,3 +21,11 @@
     # when its GPIO callback runs, so a late callback makes a long gap and then
     # a short one that reads far too fast; 3 rejects that pair.
     gap_median_window: 3
+
+    # The car's hall sensor switches twice per magnet (LOW arriving, HIGH
+    # leaving), each switch a burst of edges microseconds apart. A burst ends
+    # after burst_gap [s] of quiet; only the burst that settles at active_level
+    # (KY-003: 0, the magnet under it) counts (hall_sensor.py). Car A at 5 V,
+    # 2026-10-28: one burst per switch, none between magnets.
+    burst_gap: 0.001
+    active_level: 0
