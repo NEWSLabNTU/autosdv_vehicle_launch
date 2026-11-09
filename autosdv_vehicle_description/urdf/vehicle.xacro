@@ -3,6 +3,18 @@
   <!-- load parameter -->
   <xacro:property name="vehicle_info" value="${xacro.load_yaml('$(find autosdv_vehicle_description)/config/vehicle_info.param.yaml')}"/>
 
+  <!--
+    The body to draw, per vehicle_id. Autoware's tier4_vehicle_launch passes config_dir as
+    individual_params/config/<vehicle_id>/<sensor_model>; config/vehicle_body.yaml names a
+    mesh for the instances that have one (car A and its twin), and every other instance,
+    or a URDF built without config_dir, keeps the box.
+  -->
+  <xacro:arg name="config_dir" default=""/>
+  <xacro:property name="config_dir" value="$(arg config_dir)"/>
+  <xacro:property name="vehicle_id" value="${config_dir.rstrip('/').split('/')[-2] if config_dir.count('/') >= 1 else ''}"/>
+  <xacro:property name="bodies" value="${xacro.load_yaml('$(find autosdv_vehicle_description)/config/vehicle_body.yaml')}"/>
+  <xacro:property name="body_mesh" value="${bodies.get(vehicle_id, '') if bodies else ''}"/>
+
   <!-- vehicle body -->
   <link name="base_link">
     <visual>
@@ -12,8 +24,27 @@
       </geometry>
     </visual>
   </link>
-  
-  <link name="car_link">
+
+  <xacro:if value="${body_mesh != ''}">
+    <!-- the mesh is in base_link: the rear axle's centre on the ground -->
+    <link name="car_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="file://$(find autosdv_vehicle_description)/mesh/${body_mesh}"/>
+        </geometry>
+      </visual>
+    </link>
+
+    <joint name="car_joint" type="fixed">
+      <parent link="base_link"/>
+      <child link="car_link"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </joint>
+  </xacro:if>
+
+  <xacro:unless value="${body_mesh != ''}">
+    <link name="car_link">
 		<visual>
 		    <origin xyz="0 0 0" rpy="0 0 0"/>
 			<geometry>
@@ -27,5 +58,6 @@
     	<child link="car_link"/>
     	<origin xyz="0.1593 0 0.131" rpy="0 0 0"/>
 	</joint>
+  </xacro:unless>
     
 </robot>

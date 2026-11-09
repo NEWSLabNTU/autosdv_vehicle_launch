@@ -1,0 +1,9 @@
+# Which body autosdv_vehicle_description's URDF draws, per individual_params instance
+# (vehicle_id, read from the config_dir Autoware passes to the URDF). An instance not
+# listed here draws the plain box.
+#
+# car_a.dae is car A as built (VLP-16 on standoffs, Jetson, ZED X Mini, the red rear
+# mount), generated in base_link by autosdv_twin's body/make_body.py --dae from the twin's
+# vehicle spec and 14 photos of car A (roadmap 15). twin is car A's digital twin.
+car_a: car_a.dae
+twin: car_a.dae
