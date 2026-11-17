@@ -26,7 +26,9 @@
   </link>
 
   <xacro:if value="${body_mesh != ''}">
-    <!-- the mesh is in base_link: the rear axle's centre on the ground -->
+    <!-- the mesh is in base_link, origin at the rear axle's centre on the ground.
+         No colon followed by a space in a comment here (tier4_vehicle_launch passes the
+         URDF untyped, so ros2 launch reads it as YAML and refuses such a comment) -->
     <link name="car_link">
       <visual>
         <origin xyz="0 0 0" rpy="0 0 0"/>
