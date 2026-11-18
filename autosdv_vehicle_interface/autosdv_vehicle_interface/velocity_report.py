@@ -13,6 +13,14 @@ switches twice per magnet, so it counts one burst per magnet (the one that
 settles at ``active_level``), timed at the burst's first edge by the kernel. In sim the node
 also acknowledges each report on the plant's clock handshake (hal.py,
 LockstepParticipant) after publishing it.
+
+``reverse_enabled`` (default false): the hall sensor gives a magnitude only,
+so the sign comes from the actuator, which publishes the direction it drives
+the car on ``~/input/drive_direction`` (std_msgs/Int8, latched; -1 from a
+reverse request's arming until the car stands still after it, +1 otherwise).
+With it on, the report is negative while that direction is -1, so Autoware's
+controller sees the car rolling backward, coasting included. Off, the
+direction is ignored and the report is never negative, as it always was.
 """
 import math
 import sys
@@ -26,6 +34,8 @@ from autoware_vehicle_msgs.msg import VelocityReport
 import rclpy
 from rclpy import Parameter
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile
+from std_msgs.msg import Int8
 
 
 def make_burst_reader(pin, on_marker, clock_ns, burst_gap, active_level):
@@ -52,8 +62,18 @@ class AutoSdvVelocityReportNode(Node):
         # settles at when a magnet arrives (hall_sensor.py)
         self.declare_parameter('burst_gap', DEFAULT_BURST_GAP)
         self.declare_parameter('active_level', DEFAULT_ACTIVE_LEVEL)
+        # Sign the speed by the actuator's drive direction (module docstring)
+        self.declare_parameter('reverse_enabled', False)
 
         self.publisher = self.create_publisher(VelocityReport, '~/output/velocity_status', 1)
+        self.reverse_enabled = bool(self.get_parameter('reverse_enabled').value)
+        self.drive_direction = 1
+        if self.reverse_enabled:
+            self.direction_sub = self.create_subscription(
+                Int8, '~/input/drive_direction', self.direction_callback,
+                QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+            self.get_logger().info("reverse_enabled: the speed is signed by the actuator's "
+                                   'drive direction')
 
         wheel_diameter_cm = self.get_parameter('wheel_diameter').get_parameter_value().double_value
         wheel_circumference_meters = wheel_diameter_cm / 100.0 * math.pi
@@ -140,11 +160,18 @@ class AutoSdvVelocityReportNode(Node):
         msg = VelocityReport()
         msg.header.stamp = curr_time.to_msg()
         msg.header.frame_id = self.frame_id
-        msg.longitudinal_velocity = self.estimator.report(curr_time.nanoseconds)
+        speed = self.estimator.report(curr_time.nanoseconds)
+        if self.reverse_enabled and self.drive_direction < 0 and speed > 0.0:
+            speed = -speed
+        msg.longitudinal_velocity = speed
         msg.lateral_velocity = 0.0
         msg.heading_rate = 0.0
         self.publisher.publish(msg)
         return curr_time
+
+    def direction_callback(self, msg: Int8) -> None:
+        """Take the actuator's drive direction (+1 forward, -1 reverse)."""
+        self.drive_direction = -1 if msg.data < 0 else 1
 
     def on_gpio_rising(self, channel, stamp_ns=None) -> None:
         """

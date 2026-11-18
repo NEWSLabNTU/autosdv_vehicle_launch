@@ -60,7 +60,26 @@ DEFAULTS: Dict[str, Any] = {
     'wheel_speed_check_pwm_margin': 10,
     'wheel_speed_check_time': 1.0,
     'wheel_speed_check_min_speed': 0.05,
+    # Deliberate reverse (longitudinal.py); off unless asked for, and refused
+    # when the car's reverse thresholds are not measured
+    'reverse_enabled': False,
+    'reverse_max_speed': 0.5,
+    'reverse_floor_pwm': 0,
+    'reverse_ff_gain': 20.0,
+    'reverse_kp': 20.0,
+    'reverse_ki': 20.0,
+    'reverse_integral_limit': 15.0,
+    'reverse_arm_time': 0.3,
+    'reverse_arm_margin': 5,
+    'reverse_arm_return_time': 0.3,
+    'reverse_standstill_time': 0.5,
 }
+
+# The reverse parameters, in DEFAULTS (not the ESC thresholds: ESC_PWM_KEYS)
+REVERSE_KEYS = ('reverse_enabled', 'reverse_max_speed', 'reverse_floor_pwm', 'reverse_ff_gain',
+                'reverse_kp', 'reverse_ki', 'reverse_integral_limit', 'reverse_arm_time',
+                'reverse_arm_margin',
+                'reverse_arm_return_time', 'reverse_standstill_time')
 
 # The wheel speed check's parameters, in DEFAULTS
 WHEEL_SPEED_CHECK_KEYS = ('wheel_speed_check_enabled', 'wheel_speed_check_pwm_margin',
@@ -220,6 +239,11 @@ def make_shell_config(params: Dict[str, Any]) -> ShellConfig:
         wheel_speed_check_pwm_margin=int(params['wheel_speed_check_pwm_margin']),
         wheel_speed_check_time=float(params['wheel_speed_check_time']),
         wheel_speed_check_min_speed=float(params['wheel_speed_check_min_speed']),
+        reverse_enabled=bool(params['reverse_enabled']),
+        reverse_floor_pwm=int(params['reverse_floor_pwm']),
+        reverse_arm_margin=int(params['reverse_arm_margin']),
+        **{key: float(params[key]) for key in REVERSE_KEYS
+           if key not in ('reverse_enabled', 'reverse_floor_pwm', 'reverse_arm_margin')},
     )
 
 
@@ -261,6 +285,10 @@ class ActuatorCore:
         self.state.target_speed = velocity
         max_angle = self.config.max_steering_angle
         self.state.target_tire_angle = max(-max_angle, min(tire_angle, max_angle))
+
+    def on_gear_command(self, reverse: bool) -> None:
+        """Take Autoware's gear command (REVERSE or not); reverse needs it as well as the speed."""
+        self.longitudinal.set_gear_reverse(reverse)
 
     def select_override(self, cmd_state: InputState, velocity_state: InputState) -> Optional[str]:
         """Return the reason the motor must stop regardless of the command, or None."""

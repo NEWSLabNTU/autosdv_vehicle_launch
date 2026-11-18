@@ -26,6 +26,8 @@
        description="true: control_mode_manager also publishes /system/operation_mode/availability, always 'autonomous available'. Off by default: Autoware's diagnostic graph converter owns that topic, and a second, unconditional publisher lets the MRM handler and engage read 'available' over a failed check. Only for a stack with no graph that still needs the topic"/>
   <arg name="speed_controller_dt_source" default="velocity_report"
        description="dt handed to the plug-in: velocity_report (legacy; time since the last 20 Hz report, so ~3x effective ki at the 100 Hz loop) or loop (the loop period)"/>
+  <arg name="reverse_enabled" default="false"
+       description="true: drive backward on a negative speed command while /control/command/gear_cmd is REVERSE (the ESC's arming sequence, then a capped reverse speed loop), sign the wheel speed by the direction driven, and report the REVERSE gear (autosdv_vehicle_interface/longitudinal.py). Refused, with an error, on a car whose reverse thresholds are not measured. false: a negative command only stops the car, as it always has"/>
   <arg name="actuator_param_overrides"
        default="$(find-pkg-share autosdv_vehicle_interface)/params/actuator.yaml"
        description="a param file loaded into the actuator after actuator.yaml, for per-launch overrides such as a measured tire_angle_to_steer_ratio (the Lab 2 waypoint launch). Default: actuator.yaml again, which changes nothing"/>
@@ -56,8 +58,11 @@
       <param name="speed_controller_params" value="$(var speed_controller_params)" type="str"/>
       <param name="speed_controller_dt_source" value="$(var speed_controller_dt_source)"/>
       <param name="emergency_stop_on_any_mrm" value="$(var emergency_stop_on_any_mrm)"/>
+      <param name="reverse_enabled" value="$(var reverse_enabled)"/>
       <remap from="~/input/control_cmd" to="/control/command/control_cmd"/>
       <remap from="~/input/velocity_status" to="/vehicle/status/velocity_status"/>
+      <!-- reverse_enabled only: reverse needs the REVERSE gear command too -->
+      <remap from="~/input/gear_cmd" to="/control/command/gear_cmd"/>
       <!-- Emergency inputs: vehicle_cmd_gate's verdict and the MRM handler's state -->
       <remap from="~/input/emergency" to="/control/command/emergency_cmd"/>
       <remap from="~/input/mrm_state" to="/system/fail_safe/mrm_state"/>
@@ -66,7 +71,9 @@
     <node pkg="autosdv_vehicle_interface" exec="velocity_report" name="velocity_report_node" output="screen" if="$(var launch_velocity_report)">
       <param from="$(find-pkg-share autosdv_vehicle_interface)/params/velocity_report.yaml"/>
       <param name="hardware" value="$(var hardware)"/>
+      <param name="reverse_enabled" value="$(var reverse_enabled)"/>
       <remap from="~/output/velocity_status" to="/vehicle/status/velocity_status"/>
+      <remap from="~/input/drive_direction" to="/autosdv/actuator_node/output/drive_direction"/>
     </node>
 
     <!-- Phase 2: Autoware Interface Compliance nodes -->
@@ -77,6 +84,8 @@
       <param from="$(find-pkg-share autosdv_vehicle_interface)/params/actuator.yaml"/>
       <param from="$(var car_param_file)"/>
       <param from="$(find-pkg-share autosdv_vehicle_interface)/params/gear_manager.yaml"/>
+      <param name="reverse_enabled" value="$(var reverse_enabled)"/>
+      <remap from="~/input/drive_direction" to="/autosdv/actuator_node/output/drive_direction"/>
     </node>
 
     <!-- Control Mode Management -->

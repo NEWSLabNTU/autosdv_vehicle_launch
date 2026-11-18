@@ -85,6 +85,79 @@ dependency); the PID behind Active Control is a plug-in (see
 published on `~/debug/mode` when it changes, with the override reason appended
 (`override_brake:command_timeout`).
 
+### Reverse (`reverse_enabled`, off by default)
+
+Off, the actuator never drives backward on purpose: a negative speed command
+only stops the car, the wheel speed is never negative and the gear manager
+guesses the gear from the PWM, all as before. The launch argument
+`reverse_enabled:=true` (vehicle_interface.launch.xml) turns on three things
+together:
+
+- **Actuator** (`longitudinal.py`). Reverse needs **two keys**: a target below
+  `-full_stop_threshold` (0.1 m/s) **and** `/control/command/gear_cmd` =
+  REVERSE (`~/input/gear_cmd`). A stray negative command alone never reverses.
+  Autoware's order satisfies it: the shift decider sends REVERSE, the gear
+  manager reports it at the standstill, then the controller sends the negative
+  speed. Rolling forward, the car first stops (`brake_pwm`, above
+  `reverse_arm_pwm`) and waits `reverse_standstill_time`. Then:
+  - an ESC the shell's model does **not** call armed is armed: a pull to
+    `reverse_arm_pwm - reverse_arm_margin` (5) for `reverse_arm_time`, then
+    `init_pwm` for `reverse_arm_return_time`;
+  - an ESC it does call armed (the start state, since a restart may find it
+    armed; after an earlier pull; after a reverse) gets **no pull**, because a
+    pull on an armed ESC is a full-strength reverse. It is reversed at most at
+    `reverse_start_pwm` from rest; if that does not move it within
+    `wheel_speed_check_time`, it was locked after all and is armed then. So the
+    first reverse after power-on costs about 1 s at a standstill;
+  - reversing runs the shell's own feed-forward + PI loop on |speed|, from
+    `reverse_stop_pwm - 1` down, never below `reverse_floor_pwm` (0 =
+    `min_pwm`), the target capped at `reverse_max_speed`.
+
+  A target or gear no longer backward sends `init_pwm` (the ESC stays armed)
+  until the speed has read below `full_stop_threshold` for
+  `reverse_standstill_time` (a stale reading counts as moving); only then do the
+  forward modes run, and forward from rest (`forward_start_pwm`) disarms. An
+  ESC this shell armed that does not move when reversed latches the wheel
+  speed fault (when the check is on). Modes: `reverse_arm`, `reverse`,
+  `reverse_stop`.
+- **Velocity report**: signs the hall speed by the actuator's direction,
+  `/autosdv/actuator_node/output/drive_direction` (`std_msgs/Int8`, latched):
+  -1 from the arming until the car stands still after a reverse, +1 otherwise,
+  **0 when the actuator has reverse off or refused it** (read as +1).
+- **Gear manager**: only after the actuator has published +1 or -1 (never on 0,
+  never before hearing from it): REVERSE while it is -1; at a standstill the
+  commanded gear (REVERSE as soon as Autoware asks, which its controller waits
+  for before commanding a negative speed); DRIVE while rolling forward.
+  Otherwise the legacy PWM-based gear, with REVERSE reported as PARK.
+
+The actuator refuses reverse, logs an error and publishes 0 when the car's
+reverse thresholds (`forward_start_pwm`, `reverse_stop_pwm`,
+`reverse_start_pwm`, `reverse_arm_pwm`) are not measured, the floor is not in
+`reverse_arm_pwm + 1 .. reverse_start_pwm`, or the cap is not positive.
+
+**No brake while reversing.** Any PWM below the stop drives an armed ESC
+backward harder, so an emergency, a timeout or a fault while reversing
+**coasts** the car at `init_pwm`; nothing actively stops it. From 0.5 m/s the
+`motor_plant` coast model (time constant 1.5 s, PROVISIONAL, not fitted) rolls
+about 0.75 m; the real roll-out is **unmeasured**. Keep `reverse_max_speed` low.
+
+**Known limit:** the direction topic is latched. If the actuator dies while it
+is -1, the velocity report keeps signing backward and the gear manager keeps
+reporting REVERSE until an actuator publishes again.
+
+| parameter | default | |
+|---|---|---|
+| `reverse_enabled` | false | |
+| `reverse_max_speed` | 0.5 m/s | speed cap |
+| `reverse_floor_pwm` | 0 (= `min_pwm`) | lowest reverse command, per car (sim: 345) |
+| `reverse_ff_gain`, `reverse_kp`, `reverse_ki` | 20, 20, 20 | counts per m/s, per m/s of error, per m of error |
+| `reverse_integral_limit` | 15 counts | |
+| `reverse_arm_time`, `reverse_arm_return_time` | 0.3 s, 0.3 s | the arming pull and return |
+| `reverse_arm_margin` | 5 counts | the pull goes this far below `reverse_arm_pwm` |
+| `reverse_standstill_time` | 0.5 s | below `full_stop_threshold` this long counts as stopped |
+
+The gains are PROVISIONAL (tuned on `motor_plant`, not a car).
+
 ### Safety Overrides
 
 Above the four modes sit overrides that stop the motor whatever the command
@@ -98,7 +171,8 @@ them:
 | `emergency` | `~/input/emergency` (`tier4_vehicle_msgs/VehicleEmergencyStamped`, the gate's `/control/command/emergency_cmd`) says emergency, or `~/input/mrm_state` (`autoware_adapi_v1_msgs/MrmState`, `/system/fail_safe/mrm_state`) is an MRM that requires a stop | on |
 | `controller_fault` | the speed controller raised, or returned something that is not a finite number | -- |
 
-Every override does the same thing: **brake, then neutral**. `brake_pwm` is
+Every override does the same thing: **brake, then neutral** (while reversing:
+neutral at once, see [Reverse](#reverse-reverse_enabled-off-by-default)). `brake_pwm` is
 applied while the vehicle is moving faster than `brake_threshold` -- judged by
 the current speed, else the last reading seen, else by whether the motor was
 being driven forward -- for at most `override_brake_duration` (1.5 s), then

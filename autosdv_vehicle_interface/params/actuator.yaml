@@ -42,6 +42,12 @@
     reverse_start_pwm: 0
     # A pull to this or lower arms reverse
     reverse_arm_pwm: 0
+    # Deliberate reverse (reverse_enabled, reverse_max_speed, ...) is off by
+    # default; its parameters and defaults are in actuator_core.DEFAULTS and the
+    # README's "Reverse" section. It needs all four reverse thresholds above.
+    # Lowest reverse command, per car; 0 = min_pwm. Must lie in
+    # reverse_arm_pwm + 1 .. reverse_start_pwm.
+    reverse_floor_pwm: 0
 
     ## The default speed controller's ESC dead-band compensation
     # (speed_controller.py, AckermannSpeedPID); a car turns it on in its

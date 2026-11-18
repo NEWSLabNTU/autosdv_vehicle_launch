@@ -188,7 +188,9 @@ class SpeedPID:
             target_speed: Commanded longitudinal speed [m/s].
             measured_speed: Measured speed [m/s], after the shell's low-pass
                 filter (EMA, alpha 0.3). The hall sensor has no direction, so
-                this is never negative on the real vehicle.
+                this is never negative on the real vehicle; with
+                ``reverse_enabled`` the speed is signed, but the shell runs
+                reverse itself and never calls a plug-in while reversing.
             dt: Seconds since the previous sample (see ``speed_controller_dt_source``).
 
         Returns:

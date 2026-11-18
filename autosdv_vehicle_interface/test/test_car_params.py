@@ -54,7 +54,7 @@ def test_sim_is_actuator_yaml():
 
     car_a used to be this car; it is measured now, so only sim is pinned to the file."""
     sim = ros_params(car_profile.instance_file('sim', CONFIG))
-    pwm = {k: v for k, v in sim.items() if k not in ESC_POINTS}
+    pwm = {k: v for k, v in sim.items() if k not in ESC_POINTS | REVERSE_POINTS}
     assert pwm == {k: BASE[k] for k in pwm}
     # unmodelled: actuator.yaml's ratio (or a launch's stand-in)
     assert 'tire_angle_to_steer_ratio' not in sim
@@ -77,7 +77,10 @@ REQUIRED = {'init_pwm', 'brake_pwm', 'init_steer', 'min_steer', 'max_steer'}
 # The ESC's measured points (actuator.yaml: 0 = not measured) likewise.
 ESC_POINTS = {'forward_start_pwm', 'forward_hold_pwm', 'reverse_stop_pwm',
               'reverse_start_pwm', 'reverse_arm_pwm'}
-OPTIONAL = {'tire_angle_to_steer_ratio', 'steer_deadband', 'steer_deadband_min_angle'} | ESC_POINTS
+# A car's reverse floor (deliberate reverse; 0 in actuator.yaml = min_pwm)
+REVERSE_POINTS = {'reverse_floor_pwm'}
+OPTIONAL = {'tire_angle_to_steer_ratio', 'steer_deadband',
+            'steer_deadband_min_angle'} | ESC_POINTS | REVERSE_POINTS
 
 
 @pytest.mark.parametrize('path', CARS, ids=vehicle_id)

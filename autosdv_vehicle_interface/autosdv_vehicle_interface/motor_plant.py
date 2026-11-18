@@ -42,6 +42,9 @@ class MotorPlantParams:
         allow_reverse: Drive backwards below the deadband once stopped. The
             ESC needs a neutral-then-reverse sequence the model does not
             represent, so this is off by default.
+        coast_decel: Constant deceleration added to the coast's exponential
+            decay [m/s^2], so a coasting car comes to rest instead of creeping
+            on forever. 0 (the default) is the model as it always was.
     """
 
     init_pwm: int = 370
@@ -52,6 +55,7 @@ class MotorPlantParams:
     brake_decel: float = 3.0
     max_speed: float = 3.0
     allow_reverse: bool = False
+    coast_decel: float = 0.0
 
 
 class MotorPlant:
@@ -89,6 +93,9 @@ class MotorPlant:
                 v = min(0.0, v + p.brake_decel * dt)
         else:
             v *= math.exp(-dt / p.coast_time_constant)
+            if p.coast_decel > 0.0:
+                step = p.coast_decel * dt
+                v = max(0.0, v - step) if v > 0.0 else min(0.0, v + step)
 
         v = max(-p.max_speed, min(p.max_speed, v))
         self.distance += abs(0.5 * (self.speed + v) * dt)

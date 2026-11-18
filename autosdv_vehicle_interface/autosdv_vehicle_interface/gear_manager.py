@@ -2,6 +2,26 @@
 """
 Synthetic Gear Manager for AutoSDV.
 Maps motor PWM states to Autoware-compatible gear positions and handles gear commands.
+
+``reverse_enabled`` (default false) replaces the PWM guessing with the
+actuator's drive direction (``~/input/drive_direction``, std_msgs/Int8,
+latched), which says when the actuator's shell is in its reverse sequence --
+and, by 0, that the actuator has reverse off or refused it (its own checks:
+the car's thresholds, the floor, the speed cap). Until the actuator has
+published +1 or -1, this node never reports REVERSE (the legacy gear, with
+REVERSE read as PARK). Once it has:
+
+- direction -1 (arming, reversing, or stopping after a reverse): REVERSE,
+  whatever the gear command, until the car stands still after it;
+- otherwise at a standstill: the commanded gear. That is the handshake:
+  Autoware's controller sends a negative speed only once the gear report
+  matches its REVERSE command, and the actuator arms the ESC only once it
+  receives a negative speed, so REVERSE has to be reported before the car can
+  reverse -- at a standstill, as soon as it is asked for. From then on the
+  actuator's direction keeps it (the arming pull reads as a brake by PWM);
+- otherwise (rolling forward): DRIVE.
+
+Off, nothing changes.
 """
 from enum import Enum
 import sys
@@ -13,6 +33,8 @@ from autoware_vehicle_msgs.msg import GearCommand, GearReport, VelocityReport
 import rclpy
 from rclpy import Parameter
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile
+from std_msgs.msg import Int8
 
 
 class MotorState(Enum):
@@ -32,14 +54,17 @@ class GearManager(Node):
     Subscribes to gear commands and translates them to appropriate motor behaviors.
     """
 
-    def __init__(self):
-        super().__init__('gear_manager_node')
+    def __init__(self, **kwargs):
+        # kwargs go to rclpy's Node (parameter_overrides, context, ...)
+        super().__init__('gear_manager_node', **kwargs)
 
         # Declare gear_manager-specific parameters
         self.declare_parameter('publish_rate', 30.0)
         self.declare_parameter('velocity_threshold', 0.1)  # m/s to consider stopped
         self.declare_parameter('frame_id', 'base_link')
         self.declare_parameter('enable_gear_commands', True)
+        # Report the gear from the actuator's drive direction (module docstring)
+        self.declare_parameter('reverse_enabled', False)
 
         # Motor PWM parameters from actuator.yaml (single source of truth)
         # No defaults - these MUST be loaded from actuator.yaml via launch file
@@ -64,6 +89,15 @@ class GearManager(Node):
             f'Motor params from actuator.yaml: init_pwm={self.init_pwm}, '
             f'min_pwm={self.min_pwm}, max_pwm={self.max_pwm}, brake_pwm={self.brake_pwm}'
         )
+
+        self.reverse_enabled = bool(self.get_parameter('reverse_enabled').value)
+        # The actuator's verdict and direction: None until heard, 0 unavailable, +-1
+        self.drive_direction = None
+        if self.reverse_enabled:
+            self.direction_sub = self.create_subscription(
+                Int8, '~/input/drive_direction', self.direction_callback,
+                QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+            self.get_logger().info("reverse_enabled: gear from the actuator's direction")
 
         # State tracking
         self.current_gear = GearReport.PARK
@@ -117,6 +151,22 @@ class GearManager(Node):
         """Update current velocity from velocity report."""
         self.current_velocity = msg.longitudinal_velocity
     
+    def direction_callback(self, msg: Int8):
+        """Take the actuator's drive direction (+1 forward, -1 reverse, 0 unavailable)."""
+        if msg.data != self.drive_direction and self.reverse_enabled and msg.data == 0:
+            self.get_logger().warn('The actuator has reverse off or refused: no REVERSE gear')
+        self.drive_direction = max(-1, min(1, int(msg.data)))
+
+    def reverse_gear(self) -> int:
+        """Return the gear with reverse_enabled (module docstring)."""
+        if self.drive_direction < 0:
+            return GearReport.REVERSE
+        if abs(self.current_velocity) < self.velocity_threshold:
+            if self.requested_gear != GearReport.NONE:
+                return self.requested_gear
+            return GearReport.PARK
+        return GearReport.DRIVE
+
     def pwm_debug_callback(self, msg: Float32MultiArrayStamped):
         """
         Extract motor PWM value from actuator debug info.
@@ -263,7 +313,10 @@ class GearManager(Node):
         """
         # If vehicle is stopped and gear command is received, honor the command
         # Otherwise, infer gear from motor state
-        if abs(self.current_velocity) < self.velocity_threshold and self.motor_state == MotorState.STOPPED:
+        stopped = abs(self.current_velocity) < self.velocity_threshold
+        if self.reverse_enabled and self.drive_direction in (-1, 1):
+            new_gear = self.reverse_gear()
+        elif stopped and self.motor_state == MotorState.STOPPED:
             # Vehicle is stopped - honor gear command if safe
             if self.requested_gear != GearReport.NONE and self.is_gear_change_safe(self.requested_gear):
                 new_gear = self.requested_gear
@@ -273,6 +326,9 @@ class GearManager(Node):
         else:
             # Vehicle is moving - infer gear from motor state
             new_gear = self.map_motor_state_to_gear()
+        if self.reverse_enabled and self.drive_direction not in (-1, 1) \
+                and new_gear == GearReport.REVERSE:
+            new_gear = GearReport.PARK      # the actuator cannot reverse: never claim it
         
         # Log gear changes
         if new_gear != self.current_gear:

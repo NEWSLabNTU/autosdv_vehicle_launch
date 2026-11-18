@@ -22,10 +22,11 @@ from autosdv_vehicle_interface.actuator_core import (  # noqa: F401  (State, Con
     build_controller_params,
     Config,
     DEFAULTS,
+    REVERSE_KEYS,
     State,
     WHEEL_SPEED_CHECK_KEYS,
 )
-from autosdv_vehicle_interface.longitudinal import ESC_PWM_KEYS
+from autosdv_vehicle_interface.longitudinal import DIRECTION_UNAVAILABLE, ESC_PWM_KEYS
 from autosdv_vehicle_interface.hal import (
     ACTUATOR,
     check_hardware,
@@ -53,7 +54,7 @@ from autosdv_vehicle_interface.speed_controller import (  # noqa: F401
 from autoware_adapi_v1_msgs.msg import MrmState
 from autoware_control_msgs.msg import Control
 from autoware_internal_debug_msgs.msg import Float32MultiArrayStamped
-from autoware_vehicle_msgs.msg import VelocityReport
+from autoware_vehicle_msgs.msg import GearCommand, VelocityReport
 from rcl_interfaces.msg import SetParametersResult
 import rclpy
 from rclpy import Parameter
@@ -62,7 +63,7 @@ from rclpy.exceptions import ParameterUninitializedException
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
-from std_msgs.msg import MultiArrayDimension, String
+from std_msgs.msg import Int8, MultiArrayDimension, String
 from tier4_vehicle_msgs.msg import VehicleEmergencyStamped
 
 
@@ -242,6 +243,9 @@ class AutoSdvActuator(Node):
         # also be set while the node runs (_on_set_parameters)
         for name in WHEEL_SPEED_CHECK_KEYS:
             self.declare_parameter(name, DEFAULTS[name])
+        # Deliberate reverse (longitudinal.py), off by default
+        for name in REVERSE_KEYS:
+            self.declare_parameter(name, DEFAULTS[name])
         self.declare_parameter('enable_emergency_input', DEFAULTS['enable_emergency_input'])
         self.declare_parameter('emergency_stop_on_any_mrm', DEFAULTS['emergency_stop_on_any_mrm'])
         self.declare_parameter('neutral_write_timeout', DEFAULTS['neutral_write_timeout'])
@@ -402,6 +406,7 @@ class AutoSdvActuator(Node):
             "steer_deadband",
             "steer_deadband_min_angle",
             *WHEEL_SPEED_CHECK_KEYS,
+            *REVERSE_KEYS,
         ):
             params[name] = self.get_parameter(name).value
         params["speed_controller_params"] = self._speed_controller_params_text()
@@ -592,6 +597,15 @@ class AutoSdvActuator(Node):
             1,
         )
 
+        # Reverse needs Autoware's REVERSE gear command as well as a backward speed
+        if self.longitudinal.reverse_enabled:
+            self.gear_cmd_subscription = self.create_subscription(
+                GearCommand,
+                "~/input/gear_cmd",
+                self.gear_cmd_callback,
+                1,
+            )
+
         # Emergency inputs: the gate's verdict and the MRM state
         if self.enable_emergency_input:
             self.emergency_subscription = self.create_subscription(
@@ -621,6 +635,16 @@ class AutoSdvActuator(Node):
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
         )
         self._published_esc_state = None
+        # The direction the shell drives the car (+1 forward, -1 reverse), or 0
+        # when reverse is off or refused: the actuator's verdict, for
+        # velocity_report's sign and the gear manager, which reports REVERSE
+        # only after a +1 or -1. Not debug. Latched, published on change.
+        self.direction_publisher = self.create_publisher(
+            Int8,
+            "~/output/drive_direction",
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+        )
+        self._published_direction = None
 
         # Create debug publishers
         self.debug_control_publisher = self.create_publisher(
@@ -719,6 +743,10 @@ class AutoSdvActuator(Node):
         if verdict == StampVerdict.FUTURE:
             return f"header stamp ahead of this node's clock by more than {self.cmd_max_stamp_age} s"
         return None
+
+    def gear_cmd_callback(self, msg):
+        """Track Autoware's gear command (/control/command/gear_cmd)."""
+        self.core.on_gear_command(msg.command in (GearCommand.REVERSE, GearCommand.REVERSE_2))
 
     def emergency_callback(self, msg):
         """Track vehicle_cmd_gate's emergency output (/control/command/emergency_cmd)."""
@@ -891,6 +919,11 @@ class AutoSdvActuator(Node):
         if esc_state != self._published_esc_state:
             self.esc_state_publisher.publish(String(data=esc_state))
             self._published_esc_state = esc_state
+        direction = (self.longitudinal.drive_direction if self.longitudinal.reverse_enabled
+                     else DIRECTION_UNAVAILABLE)
+        if direction != self._published_direction:
+            self.direction_publisher.publish(Int8(data=direction))
+            self._published_direction = direction
 
     def write_neutral_outputs(self) -> bool:
         """
